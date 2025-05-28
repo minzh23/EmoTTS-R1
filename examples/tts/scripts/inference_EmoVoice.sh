@@ -1,17 +1,17 @@
 #!/bin/bash
-export PYTHONPATH=$PYTHONPATH:path/to/your/code/EmoVoice/src
-export CUDA_VISIBLE_DEVICES=2
+export PYTHONPATH=$PYTHONPATH:~/EmoVoice/src
+export CUDA_VISIBLE_DEVICES=1
 export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS=1
 export PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT=2
 export CUDA_LAUNCH_BLOCKING=1
 
 code_dir=examples/tts
-llm_path="path/to/your/ckpts/Qwen/Qwen2.5-0.5B"
-codec_decoder_path="path/to/your/ckpts/CosyVoice/CosyVoice-300M-SFT"
-ckpt_path=path/to/your/ckpts/EmoVoice
+llm_path="/root/EmoVoice/checkpoint/Qwen2.5-0.5B"
+codec_decoder_path="/root/EmoVoice/checkpoint/CosyVoice"
+ckpt_path=/root/EmoVoice/checkpoint
 split=test
-val_data_path=../test.jsonl
+val_data_path=/root/EmoVoice/EmoVoice-DB/test.jsonl
 
 # vocabulary settings
 code_layer=3            # 1 single semantic code layer   2 3 4 5 6 7 8 group semantic code layers 

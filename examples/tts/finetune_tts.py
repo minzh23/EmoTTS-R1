@@ -1,4 +1,4 @@
-from slam_llm.pipeline.finetune import main as train
+from src.slam_llm.pipeline.finetune import main as train
 
 import hydra
 import logging
@@ -46,4 +46,10 @@ def main_hydra(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+    print("Waiting for debugger to attach...")
+    debugpy.wait_for_client()  # Execution will pause here until a debugger connects
+
+    print("Debugger attached. Continuing execution...")
     main_hydra()

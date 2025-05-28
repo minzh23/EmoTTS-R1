@@ -1,3 +1,10 @@
 backup
 .DS_Store
 __pycache__/
+checkpoint/
+checkpoint.zip
+EmoVoice-DB/
+EmoVoice-DB.zip
+.vscode/
+css/
+audios/

@@ -139,7 +139,7 @@ def main(kwargs: DictConfig):
 			for key in batch.keys():
 				batch[key] = batch[key].to(device) if isinstance(batch[key], torch.Tensor) else batch[key]
 
-			audio_prompt_path = batch["neutral_speaker_wav"][0]
+			audio_prompt_path = "/root/EmoVoice/EmoVoice-DB/" + batch["neutral_speaker_wav"][0]
 
 			start_time = time.time()
 			if modeling_paradigm == "parallel" or modeling_paradigm == "interleaved":
