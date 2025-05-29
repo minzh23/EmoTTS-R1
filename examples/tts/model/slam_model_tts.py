@@ -17,7 +17,203 @@ from utils.projector_utils import setup_group_decode_adapter
 from slam_llm.utils.config_utils import generate_peft_config
 from peft import get_peft_model
 
+# Add transformers imports for the wrapper
+from transformers import PreTrainedModel, PretrainedConfig
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
 logger = logging.getLogger(__name__)
+
+class SlamTTSConfig(PretrainedConfig):
+    """
+    Configuration class for SlamTTS model that inherits from PretrainedConfig
+    to make it compatible with Transformers.
+    """
+    model_type = "slam_tts"
+    
+    def __init__(
+        self,
+        train_config=None,
+        model_config=None,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.train_config = train_config
+        self.model_config = model_config
+
+
+class SlamTTSForCausalLM(PreTrainedModel):
+    """
+    Wrapper class that makes slam_model_tts compatible with Transformers library.
+    This allows using Transformers Trainer for training.
+    """
+    config_class = SlamTTSConfig
+    supports_gradient_checkpointing = True
+    _keys_to_ignore_on_load_missing = ["slam_model"]
+    
+    def __init__(self, config):
+        super().__init__(config)
+        
+        # Store the configuration
+        self.train_config = config.train_config
+        self.model_config = config.model_config
+        
+        # Initialize the underlying slam_model_tts
+        # This will be set by the model_factory function
+        self.slam_model = None
+        
+    def _init_weights(self, module):
+        """Initialize weights - delegated to the underlying model"""
+        # The weights are initialized by the underlying slam_model_tts
+        pass
+
+    def set_slam_model(self, slam_model):
+        """Set the underlying slam_model_tts instance"""
+        self.slam_model = slam_model
+        
+    def forward(
+        self,
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        **kwargs,
+    ):
+        """
+        Forward pass that delegates to slam_model_tts and returns Transformers-compatible output.
+        """
+        if self.slam_model is None:
+            raise RuntimeError("slam_model is not set. Call set_slam_model() first.")
+            
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        # Call the original slam_model_tts forward method
+        model_outputs, text_acc, audio_acc, loss_recorder = self.slam_model.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            **kwargs,
+        )
+        
+        # Wrap the output in a format compatible with Transformers
+        if not return_dict:
+            return (model_outputs.loss, model_outputs.logits) if model_outputs.loss is not None else (model_outputs.logits,)
+        
+        return CausalLMOutputWithPast(
+            loss=model_outputs.loss,
+            logits=model_outputs.logits,
+            past_key_values=model_outputs.past_key_values if hasattr(model_outputs, 'past_key_values') else None,
+            hidden_states=model_outputs.hidden_states if hasattr(model_outputs, 'hidden_states') else None,
+            attentions=model_outputs.attentions if hasattr(model_outputs, 'attentions') else None,
+        )
+        
+    def generate(self, **kwargs):
+        """Delegate generation to the underlying slam_model"""
+        if self.slam_model is None:
+            raise RuntimeError("slam_model is not set. Call set_slam_model() first.")
+        return self.slam_model.generate(**kwargs)
+        
+    def serial_generate(self, **kwargs):
+        """Delegate serial generation to the underlying slam_model"""
+        if self.slam_model is None:
+            raise RuntimeError("slam_model is not set. Call set_slam_model() first.")
+        return self.slam_model.serial_generate(**kwargs)
+        
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        """Prepare inputs for generation"""
+        return {
+            "input_ids": input_ids,
+            **kwargs
+        }
+        
+    def save_pretrained(self, save_directory, **kwargs):
+        """Save the model and configuration to a directory"""
+        super().save_pretrained(save_directory, **kwargs)
+        
+        # Also save the underlying slam_model state dict
+        if self.slam_model is not None:
+            slam_model_path = os.path.join(save_directory, "slam_model.pt")
+            torch.save(self.slam_model.state_dict(), slam_model_path)
+            
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        """Load a pretrained model"""
+        # Load the wrapper configuration
+        config = cls.config_class.from_pretrained(pretrained_model_name_or_path)
+        model = cls(config)
+        
+        # Load the underlying slam_model if saved separately
+        slam_model_path = os.path.join(pretrained_model_name_or_path, "slam_model.pt")
+        if os.path.exists(slam_model_path):
+            # You'll need to recreate the slam_model here
+            # This requires having access to the original configuration
+            train_config = config.train_config
+            model_config = config.model_config
+            
+            # Recreate the original slam_model_tts
+            slam_model, _ = model_factory(train_config, model_config, **kwargs)
+            slam_model.load_state_dict(torch.load(slam_model_path, map_location="cpu"))
+            model.set_slam_model(slam_model)
+            
+        return model
+        
+    def get_input_embeddings(self):
+        """Get input embeddings for compatibility"""
+        if self.slam_model is not None and hasattr(self.slam_model, 'llm'):
+            if hasattr(self.slam_model.llm, 'get_input_embeddings'):
+                return self.slam_model.llm.get_input_embeddings()
+            elif hasattr(self.slam_model.llm.model, 'embed_tokens'):
+                return self.slam_model.llm.model.embed_tokens
+            elif hasattr(self.slam_model.llm.model.model, 'embed_tokens'):
+                return self.slam_model.llm.model.model.embed_tokens
+        return None
+        
+    def set_input_embeddings(self, value):
+        """Set input embeddings for compatibility"""
+        if self.slam_model is not None and hasattr(self.slam_model, 'llm'):
+            if hasattr(self.slam_model.llm, 'set_input_embeddings'):
+                self.slam_model.llm.set_input_embeddings(value)
+            elif hasattr(self.slam_model.llm.model, 'embed_tokens'):
+                self.slam_model.llm.model.embed_tokens = value
+            elif hasattr(self.slam_model.llm.model.model, 'embed_tokens'):
+                self.slam_model.llm.model.model.embed_tokens = value
+                
+    def get_output_embeddings(self):
+        """Get output embeddings for compatibility"""
+        if self.slam_model is not None and hasattr(self.slam_model, 'llm'):
+            if hasattr(self.slam_model.llm, 'get_output_embeddings'):
+                return self.slam_model.llm.get_output_embeddings()
+            elif hasattr(self.slam_model.llm, 'lm_head'):
+                return self.slam_model.llm.lm_head
+        return None
+        
+    def set_output_embeddings(self, new_embeddings):
+        """Set output embeddings for compatibility"""
+        if self.slam_model is not None and hasattr(self.slam_model, 'llm'):
+            if hasattr(self.slam_model.llm, 'set_output_embeddings'):
+                self.slam_model.llm.set_output_embeddings(new_embeddings)
+            elif hasattr(self.slam_model.llm, 'lm_head'):
+                self.slam_model.llm.lm_head = new_embeddings
+                
+    def resize_token_embeddings(self, new_num_tokens):
+        """Resize token embeddings"""
+        if self.slam_model is not None and hasattr(self.slam_model, 'llm'):
+            if hasattr(self.slam_model.llm, 'resize_token_embeddings'):
+                return self.slam_model.llm.resize_token_embeddings(new_num_tokens)
+        return None
+        
+    @property
+    def device(self):
+        """Get the device of the model"""
+        if self.slam_model is not None:
+            return next(self.slam_model.parameters()).device
+        return torch.device('cpu')
 
 def model_factory(train_config, model_config, **kwargs):
     # return necessary components for training
@@ -79,7 +275,32 @@ def model_factory(train_config, model_config, **kwargs):
             else 0
         ),
     )
+    
+    # Check if we should return a Transformers-wrapped model
+    use_transformers_wrapper = kwargs.get("use_transformers_wrapper", False)
+    if use_transformers_wrapper:
+        # Create config for the wrapper
+        config = SlamTTSConfig(
+            train_config=train_config,
+            model_config=model_config
+        )
+        
+        # Create the wrapper model
+        wrapper_model = SlamTTSForCausalLM(config)
+        wrapper_model.set_slam_model(model)
+        
+        return wrapper_model, tokenizer
+    
     return model, tokenizer
+
+
+def model_factory_transformers(train_config, model_config, **kwargs):
+    """
+    Convenience function that returns a Transformers-wrapped model.
+    This is equivalent to calling model_factory with use_transformers_wrapper=True.
+    """
+    kwargs["use_transformers_wrapper"] = True
+    return model_factory(train_config, model_config, **kwargs)
 
 
 class slam_model_tts(slam_model):
@@ -724,3 +945,20 @@ class slam_model_tts(slam_model):
             "audio": audio_tokens,
             "text": text_tokens.squeeze(0),
         }
+
+
+# Register the model for auto discovery
+try:
+    from transformers import AutoConfig, AutoModelForCausalLM
+    
+    # Register the configuration
+    AutoConfig.register("slam_tts", SlamTTSConfig)
+    
+    # Register the model
+    AutoModelForCausalLM.register(SlamTTSConfig, SlamTTSForCausalLM)
+    
+    logger.info("SlamTTS model registered with transformers AutoModel")
+except ImportError:
+    logger.warning("Could not register SlamTTS with transformers AutoModel")
+except Exception as e:
+    logger.warning(f"Error registering SlamTTS with transformers: {e}")

@@ -8,3 +8,5 @@ EmoVoice-DB.zip
 .vscode/
 css/
 audios/
+examples/tts/README_transformers_wrapper.md
+examples/tts/train_transformers_wrapper_example.py
