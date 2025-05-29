@@ -233,7 +233,7 @@ def main(kwargs: DictConfig):
     trainer = trainer_cls(
         model=model,
         reward_funcs=reward_funcs,
-        args=train_config,
+        script_args=train_config,
         # script_args=script_args,
         train_dataset=dataset,
         # eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
@@ -242,11 +242,11 @@ def main(kwargs: DictConfig):
         # attn_implementation=model_config.attn_implementation,
     )
     
-    if train_config.resume_from_checkpoint is not None:
-        checkpoint = train_config.resume_from_checkpoint
-        trainer.train(resume_from_checkpoint=checkpoint)
-    else:
-        trainer.train()
+    # if train_config.resume_from_checkpoint is not None:
+    #     checkpoint = train_config.resume_from_checkpoint
+    #     trainer.train(resume_from_checkpoint=checkpoint)
+    # else:
+    trainer.train()
 
     # Save and push to hub
     trainer.save_model(train_config.output_dir)

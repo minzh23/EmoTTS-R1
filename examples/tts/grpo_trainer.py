@@ -46,6 +46,7 @@ from PIL import Image
 import numpy as np
 import copy
 
+from tts_config import TrainConfig
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -162,99 +163,100 @@ class Qwen2VLGRPOTrainer(Trainer):
     ):
         # Args
         if args is None:
-            model_name = model if isinstance(model, str) else model.config._name_or_path
-            model_name = model_name.split("/")[-1]
+            # model_name = model if isinstance(model, str) else model.config._name_or_path
+            # model_name = model_name.split("/")[-1]
+            model_name = "EmoVoice"
             args = GRPOConfig(f"{model_name}-GRPO")
             
 
         # Models
         # Trained model
-        model_init_kwargs = args.model_init_kwargs or {}
-        model_init_kwargs["attn_implementation"] = attn_implementation
-        if isinstance(model, str):
-            model_id = model
-            torch_dtype = model_init_kwargs.get("torch_dtype")
-            if isinstance(torch_dtype, torch.dtype) or torch_dtype == "auto" or torch_dtype is None:
-                pass  # torch_dtype is already a torch.dtype or "auto" or None
-            elif isinstance(torch_dtype, str):  # it's a str, but not "auto"
-                torch_dtype = getattr(torch, torch_dtype)
-                model_init_kwargs["torch_dtype"] = torch_dtype
-            else:
-                raise ValueError(
-                    "Invalid `torch_dtype` passed to `GRPOConfig`. Expected either 'auto' or a string representing "
-                    f"a `torch.dtype` (e.g., 'float32'), but got {torch_dtype}."
-                )
-            # Disable caching if gradient checkpointing is enabled (not supported)
-            model_init_kwargs["use_cache"] = (
-                False if args.gradient_checkpointing else model_init_kwargs.get("use_cache")
-            )
-            if "Qwen2-VL" in model_id:
-                model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-            elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
-                model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-            elif "Aria" in model_id:
-                model_init_kwargs.pop("use_cache")
-                model = AriaForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-            else:
-                model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-                # model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        else:
-            model_id = model.config._name_or_path
-            if args.model_init_kwargs is not None:
-                raise ValueError(
-                    "You passed `model_init_kwargs` to the `GRPOConfig`, but your model is already instantiated. "
-                    "This argument can only be used when the `model` argument is a string."
-                )
+        # model_init_kwargs = args.model_init_kwargs or {}
+        # model_init_kwargs["attn_implementation"] = attn_implementation
+        # if isinstance(model, str):
+        #     model_id = model
+        #     torch_dtype = model_init_kwargs.get("torch_dtype")
+        #     if isinstance(torch_dtype, torch.dtype) or torch_dtype == "auto" or torch_dtype is None:
+        #         pass  # torch_dtype is already a torch.dtype or "auto" or None
+        #     elif isinstance(torch_dtype, str):  # it's a str, but not "auto"
+        #         torch_dtype = getattr(torch, torch_dtype)
+        #         model_init_kwargs["torch_dtype"] = torch_dtype
+        #     else:
+        #         raise ValueError(
+        #             "Invalid `torch_dtype` passed to `GRPOConfig`. Expected either 'auto' or a string representing "
+        #             f"a `torch.dtype` (e.g., 'float32'), but got {torch_dtype}."
+        #         )
+        #     # Disable caching if gradient checkpointing is enabled (not supported)
+        #     model_init_kwargs["use_cache"] = (
+        #         False if args.gradient_checkpointing else model_init_kwargs.get("use_cache")
+        #     )
+        #     if "Qwen2-VL" in model_id:
+        #         model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+        #     elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
+        #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+        #     elif "Aria" in model_id:
+        #         model_init_kwargs.pop("use_cache")
+        #         model = AriaForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+        #     else:
+        #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+        #         # model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+        # else:
+        #     model_id = model.config._name_or_path
+        #     if args.model_init_kwargs is not None:
+        #         raise ValueError(
+        #             "You passed `model_init_kwargs` to the `GRPOConfig`, but your model is already instantiated. "
+        #             "This argument can only be used when the `model` argument is a string."
+        #         )
 
-        if peft_config is not None:
-            model = get_peft_model(model, peft_config)
+        # if peft_config is not None:
+        #     model = get_peft_model(model, peft_config)
 
         #self.ref_model = None
         # Reference model
-        if is_deepspeed_zero3_enabled():
-            if "Qwen2-VL" in model_id:
-                self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-            elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
-                self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-            elif "Aria" in model_id:
-                self.ref_model = AriaForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-            else:
-                self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-                # self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        elif peft_config is None:
-            # If PEFT configuration is not provided, create a reference model based on the initial model.
-            self.ref_model = create_reference_model(model)
-        else:
-            # If PEFT is used, the reference model is not needed since the adapter can be disabled
-            # to revert to the initial model.
-            self.ref_model = None
+        # if is_deepspeed_zero3_enabled():
+        #     if "Qwen2-VL" in model_id:
+        #         self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+        #     elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
+        #         self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+        #     elif "Aria" in model_id:
+        #         self.ref_model = AriaForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+        #     else:
+        #         self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+        #         # self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+        # elif peft_config is None:
+        #     # If PEFT configuration is not provided, create a reference model based on the initial model.
+        #     self.ref_model = create_reference_model(model)
+        # else:
+        #     # If PEFT is used, the reference model is not needed since the adapter can be disabled
+        #     # to revert to the initial model.
+        #     self.ref_model = None
 
         # Processing class
-        if processing_class is None:
-            if "Qwen2-VL" in model_id or "Qwen2.5-VL" in model_id or "Aria" in model_id or True:
-                processing_class = AutoProcessor.from_pretrained(model_id)
-                pad_token_id = processing_class.tokenizer.pad_token_id
-                processing_class.pad_token_id = pad_token_id
-                processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
-                if "Qwen" in model_id or "Qwen2.5-VL" in model_id:
-                    processing_class.image_processor.max_pixels = max_pixels
-                    processing_class.image_processor.min_pixels = min_pixels
-            else:
-                processing_class = AutoTokenizer.from_pretrained(model.config._name_or_path, padding_side="left")
-                pad_token_id = processing_class.pad_token_id
-        else:
-            pad_token_id = processing_class.tokenizer.pad_token_id
-            processing_class.pad_token_id = pad_token_id
-            processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
+        # if processing_class is None:
+        #     if "Qwen2-VL" in model_id or "Qwen2.5-VL" in model_id or "Aria" in model_id or True:
+        #         processing_class = AutoProcessor.from_pretrained(model_id)
+        #         pad_token_id = processing_class.tokenizer.pad_token_id
+        #         processing_class.pad_token_id = pad_token_id
+        #         processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
+        #         if "Qwen" in model_id or "Qwen2.5-VL" in model_id:
+        #             processing_class.image_processor.max_pixels = max_pixels
+        #             processing_class.image_processor.min_pixels = min_pixels
+        #     else:
+        #         processing_class = AutoTokenizer.from_pretrained(model.config._name_or_path, padding_side="left")
+        #         pad_token_id = processing_class.pad_token_id
+        # else:
+        #     pad_token_id = processing_class.tokenizer.pad_token_id
+        #     processing_class.pad_token_id = pad_token_id
+        #     processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
             
         # Reward functions
         if not isinstance(reward_funcs, list):
             reward_funcs = [reward_funcs]
-        for i, reward_func in enumerate(reward_funcs):
-            if isinstance(reward_func, str):
-                reward_funcs[i] = AutoModelForSequenceClassification.from_pretrained(
-                    reward_func, num_labels=1, **model_init_kwargs
-                )
+        # for i, reward_func in enumerate(reward_funcs):
+        #     if isinstance(reward_func, str):
+        #         reward_funcs[i] = AutoModelForSequenceClassification.from_pretrained(
+        #             reward_func, num_labels=1, **model_init_kwargs
+        #         )+-
         self.reward_funcs = reward_funcs
 
         # Reward processing class
@@ -283,40 +285,27 @@ class Qwen2VLGRPOTrainer(Trainer):
             return features
 
         # Training arguments
-        self.max_prompt_length = args.max_prompt_length
-        self.max_completion_length = args.max_completion_length  # = |o_i| in the GRPO paper
-        self.num_generations = args.num_generations  # = G in the GRPO paper
-        self.temporal = script_args.temporal
+        self.max_prompt_length = script_args.max_prompt_length
+        self.max_completion_length = script_args.max_completion_length  # = |o_i| in the GRPO paper
+        self.num_generations = script_args.num_generations  # = G in the GRPO paper
         self.generation_config = GenerationConfig(
             max_new_tokens=self.max_completion_length,
             do_sample=True,
-            top_p=0.95,  
-            temperature=1, # HACK
+            top_p=0.95,
+            temperature=1,  # HACK
             num_return_sequences=self.num_generations,
-            pad_token_id=pad_token_id,
-        )
-        self.shuffled_num_generations = self.num_generations // 2
-        self.shuffled_generation_config = GenerationConfig(
-            max_new_tokens=self.max_completion_length,
-            do_sample=True,
-            top_p=0.95,  
-            temperature=1, # HACK
-            num_return_sequences=self.shuffled_num_generations,
-            pad_token_id=pad_token_id,
+            # pad_token_id=pad_token_id,
         )
         
         self.dummy_generation_config = GenerationConfig(
             max_new_tokens=1,
             do_sample=True,
-            top_p=0.95,  
-            temperature=1, # HACK
+            top_p=0.95,
+            temperature=1,   # HACK
             num_return_sequences=1,
-            pad_token_id=pad_token_id,
+            # pad_token_id=pad_token_id,
         )
-        self.len_control = script_args.len_control
-        self.beta = args.beta
-        self.min_pixels = min_pixels
-        self.max_pixels = max_pixels
+        self.beta = script_args.beta
 
         # The trainer estimates the number of FLOPs (floating-point operations) using the number of elements in the
         # input tensor associated with the key "input_ids". However, in GRPO, the sampled data does not include the
@@ -324,7 +313,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         # "Could not estimate the number of tokens of the input, floating-point operations will not be computed." To
         # suppress this warning, we set the "estimate_tokens" key in the model's "warnings_issued" dictionary to True.
         # This acts as a flag to indicate that the warning has already been issued.
-        model.warnings_issued["estimate_tokens"] = True
+        # model.warnings_issued["estimate_tokens"] = True
 
         # Initialize the metrics
         self._metrics = defaultdict(list)
@@ -345,11 +334,11 @@ class Qwen2VLGRPOTrainer(Trainer):
         # self.model_accepts_loss_kwargs to False to enable scaling.
         self.model_accepts_loss_kwargs = False
 
-        if self.ref_model is not None:
-            if self.is_deepspeed_enabled:
-                self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
-            else:
-                self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
+        # if self.ref_model is not None:
+        #     if self.is_deepspeed_enabled:
+        #         self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
+        #     else:
+        #         self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
 
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):

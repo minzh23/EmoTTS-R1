@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
+from trl import GRPOConfig
 
 @dataclass
 class VocabConfig:
@@ -132,9 +133,13 @@ class TrainConfig:
     warmup_steps:int = 1000
     total_steps:int = 100000
     validation_interval:int = 1000
+    max_prompt_length:int = 2048
+    max_completion_length:int = 768
+    num_generations:int = 1
     lr:float = 1e-4
     weight_decay:float = 0.0
     gamma:float = 0.85
+    beta:float = 0.98
     seed:int = 42
     use_fp16:bool = False
     mixed_precision:bool = True
@@ -169,6 +174,7 @@ class TrainConfig:
     })
     interleaved_text_token_num: int = 12
     interleaved_audio_token_num: int = 36
+    batch_eval_metrics: bool = False
 
 @dataclass
 class DataConfig:

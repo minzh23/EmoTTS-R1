@@ -78,6 +78,9 @@ python $code_dir/grpo_tts.py \
         ++train_config.num_epochs=1 \
         ++train_config.val_batch_size=1 \
         ++train_config.num_workers_dataloader=2 \
+        ++train_config.max_prompt_length=2048 \
+        ++train_config.max_completion_length=768 \
+        ++train_config.num_generations=8 \
         ++decode_config.text_repetition_penalty=$text_repetition_penalty \
         ++decode_config.audio_repetition_penalty=$audio_repetition_penalty \
         ++decode_config.max_new_tokens=$max_new_tokens \
