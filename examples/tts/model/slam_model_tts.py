@@ -275,23 +275,16 @@ def model_factory(train_config, model_config, **kwargs):
             else 0
         ),
     )
+
+    config = SlamTTSConfig(
+        train_config=train_config,
+        model_config=model_config
+    )
     
-    # Check if we should return a Transformers-wrapped model
-    use_transformers_wrapper = kwargs.get("use_transformers_wrapper", False)
-    if use_transformers_wrapper:
-        # Create config for the wrapper
-        config = SlamTTSConfig(
-            train_config=train_config,
-            model_config=model_config
-        )
-        
-        # Create the wrapper model
-        wrapper_model = SlamTTSForCausalLM(config)
-        wrapper_model.set_slam_model(model)
-        
-        return wrapper_model, tokenizer
+    wrapper_model = SlamTTSForCausalLM(config)
+    wrapper_model.set_slam_model(model)
     
-    return model, tokenizer
+    return wrapper_model, tokenizer
 
 
 def model_factory_transformers(train_config, model_config, **kwargs):
