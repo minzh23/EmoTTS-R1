@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.utils.data
+from torch.nn.utils.rnn import pad_sequence
 import transformers
 from datasets import Dataset, IterableDataset
 from packaging import version
@@ -174,6 +175,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             model_name = "EmoVoice"
             args = GRPOConfig(f"{model_name}-GRPO")
             args.per_device_train_batch_size = 1
+            args.report_to = []
         
         self.decode_config = decode_config
         
@@ -381,16 +383,22 @@ class Qwen2VLGRPOTrainer(Trainer):
         # logits = model(input_ids, attention_mask=attention_mask, pixel_values=pixel_values, image_grid_thw=image_grid_thw).logits  # (B, L, V)
         # import pdb
         # pdb.set_trace()
+
         logits = model(input_ids, **kwargs).logits
-        logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-        input_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
-        # Compute the log probabilities for the input tokens. Use a loop to reduce memory peak.
-        per_token_logps = []
-        for logits_row, input_ids_row in zip(logits, input_ids):
-            log_probs = logits_row.log_softmax(dim=-1)
-            token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
-            per_token_logps.append(token_log_prob)
-        return torch.stack(per_token_logps)
+        group_per_token_logps = []
+        for i in range(len(logits)):
+            logits[i] = logits[i][:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
+            input_ids_i = input_ids[:, i, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
+            # Compute the log probabilities for the input tokens. Use a loop to reduce memory peak.
+            per_token_logps = []
+            input_ids_i = torch.where(input_ids_i > 152000, input_ids_i - 152000, input_ids_i)  # Adjust input_ids to match logits
+            for logits_row, input_ids_row in zip(logits, input_ids_i):
+                log_probs = logits_row.log_softmax(dim=-1)
+                token_log_prob = torch.gather(log_probs.squeeze(0), dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
+                per_token_logps.append(token_log_prob)
+            per_token_logps = torch.stack(per_token_logps, dim=0)  # (B, L-1)
+            group_per_token_logps.append(per_token_logps)
+        return group_per_token_logps
     
     def remove_none_from_data(self, data):
         for entry in data:
@@ -564,13 +572,31 @@ class Qwen2VLGRPOTrainer(Trainer):
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
             all_completions = []    
+            all_per_token_logps = []
             for i in range(self.num_generations):
                 completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config, decode_config=self.decode_config)
-                all_completions.append(completion_ids[:-1])
-            # prompt_length = prompt_ids.size(1)
-            # prompt_ids = prompt_completion_ids[:, :prompt_length]
+                completion_ids[self.vocab_config.code_layer] = completion_ids[self.vocab_config.code_layer][:completion_ids[0].shape[0]]  # Replace EOS token with EOA token
+                completion_ids = torch.stack(completion_ids, dim=0)
+                prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+                prompt_length = prompt_ids.size(1)
+                completion_length = completion_ids.size(1)
+                prompt_ids = prompt_completion_ids[:, :prompt_length]
+                prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension
+                prompt_inputs_copy = copy.deepcopy(prompt_inputs)
+                prompt_inputs_copy.pop("input_ids")
+                prompt_inputs_copy.pop("attention_mask")
+                prompt_inputs_copy["grpo_mode"] = True
+                per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
+                per_token_logps = [per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
+                completion_ids = completion_ids[:self.vocab_config.code_layer, :].reshape(completion_length * self.vocab_config.code_layer)
+                per_token_logps = torch.stack(per_token_logps, dim=0)  # (B, L-1, V)
+                per_token_logps = per_token_logps.reshape(per_token_logps.size(1) * self.vocab_config.code_layer)
+                all_completions.append(completion_ids)
+                all_per_token_logps.append(per_token_logps)
+            completion_ids = pad_sequence(all_completions, batch_first=True, padding_value=-100)
+            per_token_logps = pad_sequence(all_per_token_logps, batch_first=True, padding_value=-100)
             # completion_ids = prompt_completion_ids[:, prompt_length:]
-            prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0)
+            # prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0)
             
             # if self.temporal:
                 
@@ -595,12 +621,12 @@ class Qwen2VLGRPOTrainer(Trainer):
         
         
         # Mask everything after the first EOS token
-        # is_eos = completion_ids == self.vocab_config.eoa
-        # device = self.accelerator.device
-        # eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
-        # eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
-        # sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        # completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+        is_eos = completion_ids == self.vocab_config.eoa
+        device = self.accelerator.device
+        eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
+        eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
+        sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
+        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
 
         # Concatenate prompt_mask with completion_mask for logit computation
         # attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B*G, P+C)
@@ -609,8 +635,8 @@ class Qwen2VLGRPOTrainer(Trainer):
         
 
         
-        prompt_inputs.pop("input_ids")
-        prompt_inputs.pop("attention_mask")
+        # prompt_inputs.pop("input_ids")
+        # prompt_inputs.pop("attention_mask")
         
         # if inputs[0]['data_type'] == 'image':
         #     prompt_inputs["pixel_values"] = prompt_inputs["pixel_values"].repeat(len(prompt_completion_ids), 1)
@@ -628,13 +654,13 @@ class Qwen2VLGRPOTrainer(Trainer):
         # prompt_inputs["depth_values"] = prompt_inputs["depth_values"].repeat(len(prompt_completion_ids), 1)
         
         
-        try:
-            per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs)
-            per_token_logps = per_token_logps[:, prompt_length - 1 :]
-        except Exception as e:
-            print(f"Error computing per_token_logps: {e}. Setting output to zero.")
-            # per_token_logps = torch.tensor(0.0, device=prompt_completion_ids.device, requires_grad=True)
-            per_token_logps = self._get_per_token_logps(model, prompt_completion_ids)
+        # try:
+        #     per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs)
+        #     per_token_logps = per_token_logps[:, prompt_length - 1 :]
+        # except Exception as e:
+        #     print(f"Error computing per_token_logps: {e}. Setting output to zero.")
+        #     # per_token_logps = torch.tensor(0.0, device=prompt_completion_ids.device, requires_grad=True)
+        #     per_token_logps = self._get_per_token_logps(model, prompt_completion_ids)
         
         with torch.inference_mode():
             try:

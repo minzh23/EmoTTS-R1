@@ -114,6 +114,12 @@ class SlamTTSForCausalLM(PreTrainedModel):
         if not return_dict:
             return (model_outputs.loss, model_outputs.logits) if model_outputs.loss is not None else (model_outputs.logits,)
         
+        if kwargs.get("grpo_mode", False):
+            # If in grpo mode, return the logits and None for other outputs
+            return CausalLMOutputWithPast(
+                logits=model_outputs,
+            )
+        
         return CausalLMOutputWithPast(
             loss=model_outputs.loss,
             logits=model_outputs.logits,
@@ -396,7 +402,22 @@ class slam_model_tts(slam_model):
 
         if kwargs.get("inference_mode", False):
             return inputs_embeds, attention_mask
+        
+        if kwargs.get("grpo_mode", False):
+            model_outputs = self.llm(inputs_embeds=inputs_embeds, attention_mask=attention_mask, labels=None)    # here we use the text token layer as the target label
+            x_ori = model_outputs.logits
+            text_vocab_size = self.model_config.vocab_config.padded_text_vocabsize
+            audio_vocab_size = self.model_config.vocab_config.padded_audio_vocabsize
+            xt = x_ori[..., :text_vocab_size]
+            xa = []
 
+            if self.group_decode_adapter is not None:
+                x_audio_ori = x_ori[..., text_vocab_size:]
+                x_audio = self.group_decode_adapter(x_audio_ori)
+                for i in range(self.code_layer):
+                    xa.append(x_audio[..., i * audio_vocab_size : (i + 1) * audio_vocab_size])
+            return xa, None, None, None
+         
         if self.train_config.modeling_paradigm == "serial":
             temp_labels = labels[:,self.code_layer - 1] if labels is not None else None
             model_outputs = self.llm(inputs_embeds=inputs_embeds, attention_mask=attention_mask, labels= temp_labels)    # here we use the text token layer as the target label
@@ -534,6 +555,7 @@ class slam_model_tts(slam_model):
         )
         max_new_tokens = kwargs["decode_config"].get("max_new_tokens", 360)
         generated_ids = [torch.zeros((max_new_tokens,), dtype=torch.long, device=input_ids.device) for _ in range(self.code_layer + 1)]
+        # per_token_logp = [torch.zeros((max_new_tokens,), dtype=torch.float, device=input_ids.device) for _ in range(self.code_layer + 1)]
         current_input_text = None
         current_audio_tokens = [None for _ in range(self.code_layer)]
         past_key_values = None
@@ -618,12 +640,14 @@ class slam_model_tts(slam_model):
                 next_token_text = torch.tensor([pad_t], device=input_ids.device)
             
             next_tokens_audio = []
+            # next_token_audio_logp = []
             for i in range(self.code_layer):
                 if not audio_end and not decode_text_only and num_latency_tokens <= step:
                     next_token_audio = self.sample_next_token(xa_logits[i][-1, :], **kwargs)
                 else:
                     next_token_audio = torch.full((input_ids.size(0),), pad_a, device=input_ids.device)
                 next_tokens_audio.append(next_token_audio)
+                # next_token_audio_logp.append(next_token_audio_logp)
 
             if eoa in next_tokens_audio or decode_text_only:
                 audio_end = True
@@ -640,6 +664,7 @@ class slam_model_tts(slam_model):
             # Append generated tokens to the tensor
             for i in range(self.code_layer):
                 generated_ids[i][step] = next_tokens_audio[i]  # Audio layers
+                # per_token_logp[i][step] = next_token_audio_logp[i]
             generated_ids[self.code_layer][step] = next_token_text  # Text layer
 
             if self.model_config.use_text_stream:
@@ -651,6 +676,7 @@ class slam_model_tts(slam_model):
                 if audio_end:
                     for i in range(self.code_layer):
                         generated_ids[i] = generated_ids[i][:step+1]
+                        # per_token_logp[i] = per_token_logp[i][:step+1]
                     break     
 
         # Concatenate the generated tokens to form the complete sequence
@@ -661,11 +687,14 @@ class slam_model_tts(slam_model):
             end_ids = (generated_ids[self.code_layer - 1] == eoa).nonzero(as_tuple=True)[0][0]
             for i in range(self.code_layer):
                 audio_tokens = generated_ids[i]
+                # audio_tokens_logp = per_token_logp[i]
                 generated_ids[i] = audio_tokens[:end_ids]
+                # per_token_logp[i] = audio_tokens_logp[:end_ids]
 
         if upsampling_factor > 1:
             generated_ids[self.code_layer] = generated_ids[self.code_layer][::upsampling_factor]
             
+        # return generated_ids, per_token_logp
         return generated_ids
 
 
@@ -812,11 +841,11 @@ class slam_model_tts(slam_model):
         Generate the next token based on the model output logits.
         Supports both greedy decoding, top-k sampling, and top-p (nucleus) sampling.
         """
-        do_sample = kwargs.get("do_sample", False)
-        temperature = kwargs.get("temperature", 1.0)
-        top_k = kwargs.get("top_k", 0)
-        top_p = kwargs.get("top_p", 1.0)
-        num_samples = kwargs.get("num_samples", 1)
+        do_sample = kwargs["generation_config"].do_sample
+        temperature = kwargs["generation_config"].temperature
+        top_k = kwargs["generation_config"].top_k
+        top_p = kwargs["generation_config"].top_p
+        num_samples = 1
 
         # Adjust logits with temperature
         logits = logits.squeeze(0)
@@ -843,7 +872,9 @@ class slam_model_tts(slam_model):
 
         if do_sample:
             # Perform sampling
-            return torch.multinomial(F.softmax(logits, dim=-1), num_samples=num_samples)
+            probs = F.softmax(logits, dim=-1)
+            sampled_token = torch.multinomial(probs, num_samples=num_samples)
+            return sampled_token
         else:
             # Greedy decoding (argmax)
             return torch.argmax(logits, dim=-1, keepdim=True)
