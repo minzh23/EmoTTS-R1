@@ -47,8 +47,10 @@ def accuracy_reward(prompts, audio_outputs, **kwargs):
             return match.group(1).strip()
         return ""
 
-    def convert_to_base64(audio_sample): 
-        base64_audio = base64.b64encode(audio_sample).decode('utf-8')
+    def convert_to_base64(audio_sample_path): 
+        with open(audio_sample_path, "rb") as audio_file:
+            audio_data = audio_file.read()
+            base64_audio = base64.b64encode(audio_data).decode('utf-8')
         return base64_audio
     
     client = OpenAI()
