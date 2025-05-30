@@ -46,7 +46,7 @@ from PIL import Image
 import numpy as np
 import copy
 
-from tts_config import TrainConfig
+from tts_config import *
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -150,6 +150,8 @@ class Qwen2VLGRPOTrainer(Trainer):
         reward_funcs: Union[RewardFunc, list[RewardFunc]],
         args: GRPOConfig = None,
         script_args = None,
+        decode_config: Optional[DecodeConfig] = None,
+        vocab_config: Optional[VocabConfig] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset, dict[str, Union[Dataset, IterableDataset]]]] = None,
         processing_class: Optional[PreTrainedTokenizerBase] = None,
@@ -167,7 +169,9 @@ class Qwen2VLGRPOTrainer(Trainer):
             # model_name = model_name.split("/")[-1]
             model_name = "EmoVoice"
             args = GRPOConfig(f"{model_name}-GRPO")
-            
+            args.per_device_train_batch_size = 1
+        
+        self.decode_config = decode_config
 
         # Models
         # Trained model
@@ -391,19 +395,19 @@ class Qwen2VLGRPOTrainer(Trainer):
     
         
 
-        prompts = [x["prompt"] for x in inputs]
-        prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
+        # prompts = [x["prompt"] for x in inputs]
+        # prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
 
                 
         
-        input_copy = copy.deepcopy(inputs[0]['prompt'])
+        # input_copy = copy.deepcopy(inputs[0]['prompt'])
         
-        input_copy = self.remove_none_from_data(input_copy)
+        # input_copy = self.remove_none_from_data(input_copy)
         
-        if inputs[0]['data_type'] == 'image':
-            input_copy[0]['content'][0]['image'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
-        elif inputs[0]['data_type'] == 'video':
-            input_copy[0]['content'][0]['video'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
+        # if inputs[0]['data_type'] == 'image':
+        #     input_copy[0]['content'][0]['image'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
+        # elif inputs[0]['data_type'] == 'video':
+        #     input_copy[0]['content'][0]['video'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
         
 
         # if "image" in inputs[0]['data_type']:
@@ -475,7 +479,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         #     videos=None
 
         # try:
-        images, videos, video_kwargs = process_vision_info(input_copy, return_video_kwargs=True)
+        # images, videos, video_kwargs = process_vision_info(input_copy, return_video_kwargs=True)
         # except Exception as e:
         #     print(f"process_vision_info error, using fixed data, {e}")
         #     if inputs[0]['data_type'] == 'image':
@@ -486,91 +490,95 @@ class Qwen2VLGRPOTrainer(Trainer):
         #     images, videos, video_kwargs = process_vision_info(input_copy, return_video_kwargs=True)
         
         
-        prompt_inputs = self.processing_class(
-            text=copy.deepcopy(prompts_text),
-            images=images,
-            videos=videos,
-            return_tensors="pt",
-            padding=False,
-            **video_kwargs,
-        )
+        # prompt_inputs = self.processing_class(
+        #     text=copy.deepcopy(prompts_text),
+        #     images=images,
+        #     videos=videos,
+        #     return_tensors="pt",
+        #     padding=False,
+        #     **video_kwargs,
+        # )
         
         
-        prompt_inputs = super()._prepare_inputs(prompt_inputs)
+        prompt_inputs = super()._prepare_inputs(inputs[0])
 
 
         # fix prompt_inputs["input_ids"] length issue
         if self.max_prompt_length is not None:
             prompt_inputs["input_ids"] = prompt_inputs["input_ids"][:, -self.max_prompt_length :]
-            prompt_inputs["attention_mask"] = prompt_inputs["attention_mask"][:, -self.max_prompt_length :]
+            prompt_inputs["attention_mask"] = prompt_inputs["attention_mask"][-self.max_prompt_length :]
 
         prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
+        prompt_inputs["input_ids"] = prompt_ids.unsqueeze(0)
+        prompt_inputs["attention_mask"] = prompt_mask.unsqueeze(0)
 
-        
         if self.max_prompt_length is not None:
             prompt_ids = prompt_ids[:, -self.max_prompt_length :]
-            prompt_mask = prompt_mask[:, -self.max_prompt_length :]
+            prompt_mask = prompt_mask[-self.max_prompt_length :]
         
         # image_tensors = torch.cat(all_image_tensors, dim=1)
         # prompt_inputs["depth_values"] = image_tensors
         # prompt_inputs = prompt_inputs.to(model.device)
 
-        if self.temporal and videos:
-            indices = torch.randperm(videos[0].size(0))
-            # t, h, w = prompt_inputs["video_grid_thw"]
-            # image_tensors = image_tensors.view(3, t, h, w).permute(1, 0, 2, 3).contiguous()
-            # image_tensors = image_tensors[indices].permute(1, 0, 2, 3).contiguous()
-            # image_tensors = image_tensors.view(3, -1)
-            shuffled_video_inputs = [videos[0][indices]]
-            shuffled_prompt_inputs = self.processing_class(
-                text=copy.deepcopy(prompts_text),
-                images=images,
-                videos=shuffled_video_inputs,
-                return_tensors="pt",
-                padding=True,
-                padding_side="right",
-                add_special_tokens=False,
-            )
-            shuffled_prompt_inputs = super()._prepare_inputs(shuffled_prompt_inputs)
-            shuffled_prompt_ids, shuffled_prompt_mask = shuffled_prompt_inputs["input_ids"], shuffled_prompt_inputs["attention_mask"]
-            if self.max_prompt_length is not None:
-                shuffled_prompt_ids = shuffled_prompt_ids[:, -self.max_prompt_length :]
-                shuffled_prompt_mask = shuffled_prompt_mask[:, -self.max_prompt_length :]
+        # if self.temporal and videos:
+        #     indices = torch.randperm(videos[0].size(0))
+        #     # t, h, w = prompt_inputs["video_grid_thw"]
+        #     # image_tensors = image_tensors.view(3, t, h, w).permute(1, 0, 2, 3).contiguous()
+        #     # image_tensors = image_tensors[indices].permute(1, 0, 2, 3).contiguous()
+        #     # image_tensors = image_tensors.view(3, -1)
+        #     shuffled_video_inputs = [videos[0][indices]]
+        #     shuffled_prompt_inputs = self.processing_class(
+        #         text=copy.deepcopy(prompts_text),
+        #         images=images,
+        #         videos=shuffled_video_inputs,
+        #         return_tensors="pt",
+        #         padding=True,
+        #         padding_side="right",
+        #         add_special_tokens=False,
+        #     )
+        #     shuffled_prompt_inputs = super()._prepare_inputs(shuffled_prompt_inputs)
+        #     shuffled_prompt_ids, shuffled_prompt_mask = shuffled_prompt_inputs["input_ids"], shuffled_prompt_inputs["attention_mask"]
+        #     if self.max_prompt_length is not None:
+        #         shuffled_prompt_ids = shuffled_prompt_ids[:, -self.max_prompt_length :]
+        #         shuffled_prompt_mask = shuffled_prompt_mask[:, -self.max_prompt_length :]
             # shuffled_prompt_inputs["depth_values"] = image_tensors
         
         
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
-            prompt_completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config)
-            prompt_length = prompt_ids.size(1)
-            prompt_ids = prompt_completion_ids[:, :prompt_length]
-            completion_ids = prompt_completion_ids[:, prompt_length:]
+            all_completions = []    
+            for i in range(self.num_generations):
+                completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config, decode_config=self.decode_config)
+                all_completions.append(completion_ids[:-1])
+            # prompt_length = prompt_ids.size(1)
+            # prompt_ids = prompt_completion_ids[:, :prompt_length]
+            # completion_ids = prompt_completion_ids[:, prompt_length:]
             prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0)
             
-            if self.temporal:
+            # if self.temporal:
                 
-                if videos:
+            #     if videos:
             
-                    shuffled_prompt_completion_ids = unwrapped_model.generate(**shuffled_prompt_inputs, generation_config=self.shuffled_generation_config)
-                    shuffled_prompt_length = shuffled_prompt_ids.size(1)
-                    shuffled_prompt_ids = shuffled_prompt_completion_ids[:, :shuffled_prompt_length]
-                    shuffled_completion_ids = shuffled_prompt_completion_ids[:, shuffled_prompt_length:]
-                    shuffled_prompt_mask = prompt_mask.repeat_interleave(self.shuffled_num_generations, dim=0)
+            #         shuffled_prompt_completion_ids = unwrapped_model.generate(**shuffled_prompt_inputs, generation_config=self.shuffled_generation_config)
+            #         shuffled_prompt_length = shuffled_prompt_ids.size(1)
+            #         shuffled_prompt_ids = shuffled_prompt_completion_ids[:, :shuffled_prompt_length]
+            #         shuffled_completion_ids = shuffled_prompt_completion_ids[:, shuffled_prompt_length:]
+            #         shuffled_prompt_mask = prompt_mask.repeat_interleave(self.shuffled_num_generations, dim=0)
                     
-                else:
+            #     else:
                     
-                    shuffled_prompt_completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.dummy_generation_config)
+            #         shuffled_prompt_completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.dummy_generation_config)
 
         
-        print('path:', input_copy[0]['content'][0][inputs[0]['data_type']])   
-        print('problem_id:', inputs[0]['problem_id'])       
-        print('prompt_length:', prompt_length)
+        # print('path:', input_copy[0]['content'][0][inputs[0]['data_type']])   
+        # print('problem_id:', inputs[0]['problem_id'])       
+        # print('prompt_length:', prompt_length)
                 
         
         
         
         # Mask everything after the first EOS token
-        is_eos = completion_ids == self.processing_class.eos_token_id
+        is_eos = completion_ids == self.vocab_config.eoa
         device = self.accelerator.device
         eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
         eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
@@ -587,20 +595,20 @@ class Qwen2VLGRPOTrainer(Trainer):
         prompt_inputs.pop("input_ids")
         prompt_inputs.pop("attention_mask")
         
-        if inputs[0]['data_type'] == 'image':
-            prompt_inputs["pixel_values"] = prompt_inputs["pixel_values"].repeat(len(prompt_completion_ids), 1)
-            prompt_inputs["image_grid_thw"] = prompt_inputs["image_grid_thw"].repeat(len(prompt_completion_ids), 1)
-        # import pdb; pdb.set_trace()
+        # if inputs[0]['data_type'] == 'image':
+        #     prompt_inputs["pixel_values"] = prompt_inputs["pixel_values"].repeat(len(prompt_completion_ids), 1)
+        #     prompt_inputs["image_grid_thw"] = prompt_inputs["image_grid_thw"].repeat(len(prompt_completion_ids), 1)
+        # # import pdb; pdb.set_trace()
         
 
-        if inputs[0]['data_type'] == 'video':
-            prompt_inputs["pixel_values_videos"] = prompt_inputs["pixel_values_videos"].repeat(len(prompt_completion_ids), 1)
-            prompt_inputs["video_grid_thw"] = prompt_inputs["video_grid_thw"].repeat(len(prompt_completion_ids), 1)
-            if 'second_per_grid_ts' in prompt_inputs:
-                del prompt_inputs["second_per_grid_ts"]
-                # prompt_inputs["second_per_grid_ts"] = torch.tensor(prompt_inputs["second_per_grid_ts"]).repeat(len(prompt_completion_ids), 1)
+        # if inputs[0]['data_type'] == 'video':
+        #     prompt_inputs["pixel_values_videos"] = prompt_inputs["pixel_values_videos"].repeat(len(prompt_completion_ids), 1)
+        #     prompt_inputs["video_grid_thw"] = prompt_inputs["video_grid_thw"].repeat(len(prompt_completion_ids), 1)
+        #     if 'second_per_grid_ts' in prompt_inputs:
+        #         del prompt_inputs["second_per_grid_ts"]
+        #         # prompt_inputs["second_per_grid_ts"] = torch.tensor(prompt_inputs["second_per_grid_ts"]).repeat(len(prompt_completion_ids), 1)
         
-        prompt_inputs["depth_values"] = prompt_inputs["depth_values"].repeat(len(prompt_completion_ids), 1)
+        # prompt_inputs["depth_values"] = prompt_inputs["depth_values"].repeat(len(prompt_completion_ids), 1)
         
         
         try:
@@ -631,25 +639,25 @@ class Qwen2VLGRPOTrainer(Trainer):
         x_clamped = torch.clamp(ref_per_token_logps - per_token_logps, min=-10, max=10)  # 限制 x 的范围
         per_token_kl = torch.exp(x_clamped) - x_clamped - 1
         
-        if self.temporal and videos:
-            shuffled_completions = self.processing_class.batch_decode(shuffled_completion_ids, skip_special_tokens=True)
-            if is_conversational(inputs[0]):
-                shuffled_completions = [[{"role": "assistant", "content": shuffled_completion}] for shuffled_completion in shuffled_completions]
+        # if self.temporal and videos:
+        #     shuffled_completions = self.processing_class.batch_decode(shuffled_completion_ids, skip_special_tokens=True)
+        #     if is_conversational(inputs[0]):
+        #         shuffled_completions = [[{"role": "assistant", "content": shuffled_completion}] for shuffled_completion in shuffled_completions]
                 
-            # Compute the rewards
-            shuffled_prompts = [prompt for prompt in prompts for _ in range(self.shuffled_num_generations)]
-            shuffled_rewards_per_func = torch.zeros(len(shuffled_prompts), len(self.reward_funcs), device=device)
-            for i, (reward_func, reward_processing_class) in enumerate(
-                zip(self.reward_funcs, self.reward_processing_classes)
-            ):
-                # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-                shuffled_reward_kwargs = {key: [] for key in inputs[0].keys() if key not in ["prompt", "completion"]}
-                for key in shuffled_reward_kwargs:
-                    for example in inputs:
-                        # Repeat each value in the column for `num_generations` times
-                        shuffled_reward_kwargs[key].extend([example[key]] * self.shuffled_num_generations)
-                shuffled_output_reward_func = reward_func(prompts=shuffled_prompts, completions=shuffled_completions, **shuffled_reward_kwargs)
-                shuffled_rewards_per_func[:, i] = torch.tensor(shuffled_output_reward_func, dtype=torch.float32, device=device)
+        #     # Compute the rewards
+        #     shuffled_prompts = [prompt for prompt in prompts for _ in range(self.shuffled_num_generations)]
+        #     shuffled_rewards_per_func = torch.zeros(len(shuffled_prompts), len(self.reward_funcs), device=device)
+        #     for i, (reward_func, reward_processing_class) in enumerate(
+        #         zip(self.reward_funcs, self.reward_processing_classes)
+        #     ):
+        #         # Repeat all input columns (but "prompt" and "completion") to match the number of generations
+        #         shuffled_reward_kwargs = {key: [] for key in inputs[0].keys() if key not in ["prompt", "completion"]}
+        #         for key in shuffled_reward_kwargs:
+        #             for example in inputs:
+        #                 # Repeat each value in the column for `num_generations` times
+        #                 shuffled_reward_kwargs[key].extend([example[key]] * self.shuffled_num_generations)
+        #         shuffled_output_reward_func = reward_func(prompts=shuffled_prompts, completions=shuffled_completions, **shuffled_reward_kwargs)
+        #         shuffled_rewards_per_func[:, i] = torch.tensor(shuffled_output_reward_func, dtype=torch.float32, device=device)
 
         
         # Decode the generated completions
@@ -675,50 +683,50 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         
         
-        if self.temporal and videos:
-            temporal_rewards_per_func = rewards_per_func.clone()
+        # if self.temporal and videos:
+        #     temporal_rewards_per_func = rewards_per_func.clone()
             
-            acc_mean = temporal_rewards_per_func[:, 0].mean()
-            shuffled_acc_mean = shuffled_rewards_per_func[:, 0].mean()
+        #     acc_mean = temporal_rewards_per_func[:, 0].mean()
+        #     shuffled_acc_mean = shuffled_rewards_per_func[:, 0].mean()
 
-            if acc_mean >= 0.8 * shuffled_acc_mean:
-                mask = temporal_rewards_per_func[:, 0] > 0.1
-                temporal_rewards_per_func[mask, 0] = temporal_rewards_per_func[mask, 0] + 0.3
-                temporal_rewards = torch.tensor([1.0]).to('cuda')
-            else:
-                temporal_rewards = torch.tensor([0.0]).to('cuda')
-        else:
-            temporal_rewards =  torch.tensor([0.5]).to('cuda')
+        #     if acc_mean >= 0.8 * shuffled_acc_mean:
+        #         mask = temporal_rewards_per_func[:, 0] > 0.1
+        #         temporal_rewards_per_func[mask, 0] = temporal_rewards_per_func[mask, 0] + 0.3
+        #         temporal_rewards = torch.tensor([1.0]).to('cuda')
+        #     else:
+        #         temporal_rewards = torch.tensor([0.0]).to('cuda')
+        # else:
+        #     temporal_rewards =  torch.tensor([0.5]).to('cuda')
         
         # Sum the rewards from all reward functions
-        if self.temporal and videos:
-            rewards = temporal_rewards_per_func.sum(dim=1)
-        else:
-            rewards = rewards_per_func.sum(dim=1)
+        # if self.temporal and videos:
+        #     rewards = temporal_rewards_per_func.sum(dim=1)
+        # else:
+        rewards = rewards_per_func.sum(dim=1)
     
         
-        if self.len_control:
-            mem_rewards = [0] * self.num_generations
-            mask = rewards_per_func[:, 0] > 0.1
-            lenth_list = completion_mask.sum(1)
-            selected_indices = torch.nonzero(mask, as_tuple=True)[0].tolist()
-            #             if len(selected_indices) > 1 and len(selected_indices) < self.num_generations:
-            # if len(selected_indices) > 1:
-            #     selected_items = [(i, lenth_list[i]) for i in selected_indices]
-            #     sorted_items = sorted(selected_items, key=lambda x: x[1], reverse=True)
-            #     N = len(sorted_items)
-            #     for rank, (idx, length) in enumerate(sorted_items):
-            #         reward = 0.2 - 0.2 * (rank / N)
-            #         rewards[idx] += reward
-            #         mem_rewards[idx] = reward
-            # for idx in range(len(lenth_list)):
-            #     if lenth_list[idx] >= 512:
-            #         rewards[idx] -= 0.5
+        # if self.len_control:
+        #     mem_rewards = [0] * self.num_generations
+        #     mask = rewards_per_func[:, 0] > 0.1
+        #     lenth_list = completion_mask.sum(1)
+        #     selected_indices = torch.nonzero(mask, as_tuple=True)[0].tolist()
+        #     #             if len(selected_indices) > 1 and len(selected_indices) < self.num_generations:
+        #     # if len(selected_indices) > 1:
+        #     #     selected_items = [(i, lenth_list[i]) for i in selected_indices]
+        #     #     sorted_items = sorted(selected_items, key=lambda x: x[1], reverse=True)
+        #     #     N = len(sorted_items)
+        #     #     for rank, (idx, length) in enumerate(sorted_items):
+        #     #         reward = 0.2 - 0.2 * (rank / N)
+        #     #         rewards[idx] += reward
+        #     #         mem_rewards[idx] = reward
+        #     # for idx in range(len(lenth_list)):
+        #     #     if lenth_list[idx] >= 512:
+        #     #         rewards[idx] -= 0.5
                     
-            if len(selected_indices) > 1:     
-                for idx in selected_indices:
-                    if 320 <= lenth_list[idx] <= 512:
-                        rewards[idx] += 0.2
+        #     if len(selected_indices) > 1:     
+        #         for idx in selected_indices:
+        #             if 320 <= lenth_list[idx] <= 512:
+        #                 rewards[idx] += 0.2
         
         print(rewards)
         print(completion_mask.sum(1))

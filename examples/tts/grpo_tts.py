@@ -234,6 +234,8 @@ def main(kwargs: DictConfig):
         model=model,
         reward_funcs=reward_funcs,
         script_args=train_config,
+        decode_config=decode_config,
+        vocab_config=model_config.vocab_config,
         # script_args=script_args,
         train_dataset=dataset,
         # eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
@@ -256,10 +258,10 @@ def main(kwargs: DictConfig):
 
 if __name__ == "__main__":
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    # if local_rank == 0:
-    #     import debugpy
-    #     debugpy.listen(("127.0.0.1", 5678))
-    #     print("Waiting for debugger to attach...")
-    #     debugpy.wait_for_client()
-    #     print("Debugger attached, starting execution...")
+    if local_rank == 0:
+        import debugpy
+        debugpy.listen(("127.0.0.1", 5678))
+        print("Waiting for debugger to attach...")
+        debugpy.wait_for_client()
+        print("Debugger attached, starting execution...")
     main_hydra()                     

@@ -532,7 +532,7 @@ class slam_model_tts(slam_model):
             return_dict=return_dict,
             **kwargs,
         )
-        max_new_tokens = kwargs.get("max_new_tokens", 360)
+        max_new_tokens = kwargs["decode_config"].get("max_new_tokens", 360)
         generated_ids = [torch.zeros((max_new_tokens,), dtype=torch.long, device=input_ids.device) for _ in range(self.code_layer + 1)]
         current_input_text = None
         current_audio_tokens = [None for _ in range(self.code_layer)]
@@ -541,12 +541,12 @@ class slam_model_tts(slam_model):
         text_vocab_size = self.model_config.vocab_config.padded_text_vocabsize
         audio_vocab_size = self.model_config.vocab_config.padded_audio_vocabsize
 
-        num_latency_tokens = kwargs.get("num_latency_tokens", 0)
-        text_repetition_penalty = kwargs.get("text_repetition_penalty", 1.0)
-        audio_repetition_penalty = kwargs.get("audio_repetition_penalty", 1.0)
-        decode_text_only = kwargs.get("decode_text_only", False)
-        upsampling_factor = kwargs.get("upsampling_factor", 1)
-        do_layershift = kwargs.get("do_layershift", True)
+        num_latency_tokens = kwargs["decode_config"].get("num_latency_tokens", 0)
+        text_repetition_penalty = kwargs["decode_config"].get("text_repetition_penalty", 1.0)
+        audio_repetition_penalty = kwargs["decode_config"].get("audio_repetition_penalty", 1.0)
+        decode_text_only = kwargs["decode_config"].get("decode_text_only", False)
+        upsampling_factor = kwargs["decode_config"].get("upsampling_factor", 1)
+        do_layershift = kwargs["decode_config"].get("do_layershift", True)
         if do_layershift:
             layershift = layer_shift
         else:
@@ -564,13 +564,13 @@ class slam_model_tts(slam_model):
             model_outputs = self.llm.generate(
                 inputs_embeds=inputs_embeds,
                 max_new_tokens=max_new_tokens,
-                num_beams=kwargs.get("num_beams", 4),
-                do_sample=kwargs.get("do_sample", False),
-                min_length=kwargs.get("min_length", 1),
-                top_p=kwargs.get("top_p", 1.0),
+                num_beams=kwargs["generation_config"].get("num_beams", 4),
+                do_sample=kwargs["generation_config"].get("do_sample", False),
+                min_length=kwargs["generation_config"].get("min_length", 1),
+                top_p=kwargs["generation_config"].get("top_p", 1.0),
                 repetition_penalty=text_repetition_penalty,
-                length_penalty=kwargs.get("length_penalty", 1.0),
-                temperature=kwargs.get("temperature", 1.0),
+                length_penalty=kwargs["generation_config"].get("length_penalty", 1.0),
+                temperature=kwargs["generation_config"].get("temperature", 1.0),
                 attention_mask=attention_mask,
                 bos_token_id=self.tokenizer.bos_token_id,
                 eos_token_id=layershift(eoa, 0),
