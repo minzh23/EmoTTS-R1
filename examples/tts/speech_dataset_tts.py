@@ -184,6 +184,7 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
         target_text = data_dict.get("target_text", None)
         key = data_dict.get("key", None)
         neutral_speaker_wav = data_dict.get("neutral_speaker_wav", None)
+        emotion_text_prompt = data_dict.get("emotion_text_prompt", None)
 
         target_audio, target_audio_length = self.extract_audio_feature(target_audio)
 
@@ -231,6 +232,7 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
                 "target_text": target_text,
                 "prompt_length": prompt_length,
                 "neutral_speaker_wav": neutral_speaker_wav,
+                "emotion_text_prompt": emotion_text_prompt,
             }
 
         answer_text = self.answer_template.format(target_text)

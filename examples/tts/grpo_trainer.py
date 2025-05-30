@@ -411,9 +411,7 @@ class Qwen2VLGRPOTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         if return_outputs:
             raise ValueError("The GRPOTrainer does not support returning outputs")
-    
-        
-
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # prompts = [x["prompt"] for x in inputs]
         # prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
 
@@ -597,12 +595,12 @@ class Qwen2VLGRPOTrainer(Trainer):
         
         
         # Mask everything after the first EOS token
-        is_eos = completion_ids == self.vocab_config.eoa
-        device = self.accelerator.device
-        eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
-        eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
-        sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+        # is_eos = completion_ids == self.vocab_config.eoa
+        # device = self.accelerator.device
+        # eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
+        # eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
+        # sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
+        # completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
 
         # Concatenate prompt_mask with completion_mask for logit computation
         # attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B*G, P+C)
@@ -690,9 +688,9 @@ class Qwen2VLGRPOTrainer(Trainer):
         for example in inputs:
             if "prompt" in example:
                 prompts.append(example["prompt"])
-            elif "source_texts" in example:
-                prompts.append(example["source_texts"])
-                prompts_for_reward.append({"source_prompt": example["source_texts"], "emotion_prompt": example["emotion_text_prompt"]})
+            elif "source_text" in example:
+                prompts.append(example["source_text"])
+                prompts_for_reward.append({"source_prompt": example["source_text"], "emotion_prompt": example["emotion_text_prompt"]})
             else:
                 # Fallback: create a simple prompt
                 prompts.append("Generate audio")
@@ -704,18 +702,36 @@ class Qwen2VLGRPOTrainer(Trainer):
         prompt_length = prompt_ids.size(1)
         # For TTS, we assume completions are audio tokens, not text tokens to be concatenated
         # We'll use completion_ids directly for masking, but create placeholder for logit computation
-        if len(all_completions) > 0:
-            # Stack all completions for batch processing
-            completion_ids_batch = torch.stack([comp for comp in all_completions], dim=0)
-            # Create prompt_completion_ids by repeating prompt_ids for each completion
-            prompt_ids_repeated = prompt_ids.unsqueeze(0).repeat(len(all_completions), 1)
-            prompt_completion_ids = torch.cat([prompt_ids_repeated, completion_ids_batch], dim=1)
-        else:
-            prompt_completion_ids = prompt_ids.unsqueeze(0)
+        # if len(all_completions) > 0:
+        #     # Stack all completions for batch processing
+        #     completion_ids_batch = torch.stack([comp for comp in all_completions], dim=0)
+        #     # Create prompt_completion_ids by repeating prompt_ids for each completion
+        #     prompt_ids_repeated = prompt_ids.unsqueeze(0).repeat(len(all_completions), 1)
+        #     prompt_completion_ids = torch.cat([prompt_ids_repeated, completion_ids_batch], dim=1)
+        # else:
+        #     prompt_completion_ids = prompt_ids.unsqueeze(0)
         
         # Compute the rewards
         prompts_for_reward = [prompt for prompt in prompts_for_reward for _ in range(self.num_generations)]
         rewards_per_func = torch.zeros(len(prompts_for_reward), len(self.reward_funcs), device=device)
+        
+        model_config = ModelConfig(
+            llm_name="qwen2.5-0.5b",
+            llm_path="/root/EmoVoice/checkpoint/Qwen2.5-0.5B",
+            llm_dim=896,
+            codec_decoder_path="/root/EmoVoice/checkpoint/CosyVoice",
+            codec_decode=True,
+            codec_decoder_type="CosyVoice",
+            group_decode=True,
+            group_decode_adapter_type="linear",
+            use_text_stream=False,
+            vocab_config=VocabConfig(
+                code_layer=3,
+                audio_vocabsize=4096,
+                text_vocabsize=151936, 
+            )
+        )
+        
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
@@ -728,7 +744,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             
             # Convert all_completions (audio tokens) to audio files
             audio_outputs = []
-            codec_decoder = model.codec_decoder  # Get codec decoder from model
+            codec_decoder = model.slam_model.codec_decoder  # Get codec decoder from model
             
             # Get audio prompt path if available
             audio_prompt_path = None
@@ -752,7 +768,7 @@ class Qwen2VLGRPOTrainer(Trainer):
                         # Use cosyvoice decoder to convert tokens to audio
                         audio_hat = audio_decode_cosyvoice(
                             audio_tokens,
-                            model.config,  # model_config
+                            model_config,  # model_config
                             codec_decoder,
                             audio_prompt_path,
                             self.code_layer,

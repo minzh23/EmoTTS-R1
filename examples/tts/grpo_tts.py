@@ -61,40 +61,36 @@ def accuracy_reward(prompts, audio_outputs, **kwargs):
 
     for prompt, audio_output in zip(prompts, audio_outputs):
     
-        try:
-            base64_audio = convert_to_base64(audio_output)
-            source_prompt = prompt["source_prompt"]
-            emotion_prompt = prompt["emotion_prompt"]
-            completion = client.chat.completions.create(
-            model="gpt-4o-audio-preview",
-            messages=[
-                {"role": "developer", "content": "You are a strict assistant who tries to provide precise evaluation. You are given a text message and an audio input. In the text message, there is a target text and a emotional prompt. You have to decide how the input audio conveyed the emotion described in the emotional prompt. Rate the audio from 0 to 10, where 0 is the worst and 10 is the best. Output only the rating number between <answer> and </answer>, with no further explanation. "},
-                {"role": "user", 
-                "content": [
-                    {"type": "text", "text": f"The text message is: {source_prompt}. The emotional prompt is : {emotion_prompt}"},
+        
+        base64_audio = convert_to_base64(audio_output)
+        source_prompt = prompt["source_prompt"]
+        emotion_prompt = prompt["emotion_prompt"]
+        completion = client.chat.completions.create(
+        model="gpt-4o-audio-preview",
+        messages=[
+            {"role": "developer", "content": "You are a strict assistant who tries to provide precise evaluation. You are given a text message and an audio input. In the text message, there is a target text and a emotional prompt. You have to decide how the input audio conveyed the emotion described in the emotional prompt. Rate the audio from 0 to 10, where 0 is the worst and 10 is the best. Output only the rating number between <answer> and </answer>, with no further explanation. "},
+            {"role": "user", 
+            "content": [
+                {"type": "text", "text": f"The text message is: {source_prompt}. The emotional prompt is : {emotion_prompt}"},
+                {
+                    "type": "input_audio", 
+                    "input_audio":
                     {
-                        "type": "input_audio", 
-                        "input_audio":
-                        {
-                            "data": base64_audio,
-                            "format": "wav"
-                        }
+                        "data": base64_audio,
+                        "format": "wav"
                     }
-                ]
                 }
             ]
-            )
-            reward_str = extract_answer(completion.choices[0].message.content)
-            if reward_str == "": 
-                print(f"Invalid reward")
-                reward = 1.0
-            else: 
-                reward = float(reward_str) / 10.0
-                reward = max(0.0, min(1.0, reward))
-
-        except Exception as e:
-            print(f"Error in reward_fn")
-            reward = 0.0
+            }
+        ]
+        )
+        reward_str = extract_answer(completion.choices[0].message.content)
+        if reward_str == "": 
+            print(f"Invalid reward")
+            reward = 1.0
+        else: 
+            reward = float(reward_str) / 10.0
+            reward = max(0.0, min(1.0, reward))
     
         rewards.append(reward)
         
@@ -221,10 +217,10 @@ def main(kwargs: DictConfig):
 
 if __name__ == "__main__":
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    if local_rank == 0:
-        import debugpy
-        debugpy.listen(("127.0.0.1", 5678))
-        print("Waiting for debugger to attach...")
-        debugpy.wait_for_client()
-        print("Debugger attached, starting execution...")
+    # if local_rank == 0:
+    #     import debugpy
+    #     debugpy.listen(("127.0.0.1", 5678))
+    #     print("Waiting for debugger to attach...")
+    #     debugpy.wait_for_client()
+    #     print("Debugger attached, starting execution...")
     main_hydra()                     
