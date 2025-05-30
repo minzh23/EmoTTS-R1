@@ -256,10 +256,10 @@ def main(kwargs: DictConfig):
 
 if __name__ == "__main__":
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    if local_rank == 0:
-        import debugpy
-        debugpy.listen(("127.0.0.1", 5678))
-        print("Waiting for debugger to attach...")
-        debugpy.wait_for_client()
-        print("Debugger attached, starting execution...")
+    # if local_rank == 0:
+    #     import debugpy
+    #     debugpy.listen(("127.0.0.1", 5678))
+    #     print("Waiting for debugger to attach...")
+    #     debugpy.wait_for_client()
+    #     print("Debugger attached, starting execution...")
     main_hydra()                     

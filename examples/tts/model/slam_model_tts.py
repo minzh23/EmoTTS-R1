@@ -37,8 +37,17 @@ class SlamTTSConfig(PretrainedConfig):
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.train_config = train_config
-        self.model_config = model_config
+        if hasattr(train_config, '_content'):  # OmegaConf DictConfig
+            from omegaconf import OmegaConf
+            self.train_config = OmegaConf.to_container(train_config, resolve=True)
+        else:
+            self.train_config = train_config
+            
+        if hasattr(model_config, '_content'):  # OmegaConf DictConfig
+            from omegaconf import OmegaConf
+            self.model_config = OmegaConf.to_container(model_config, resolve=True)
+        else:
+            self.model_config = model_config
 
 
 class SlamTTSForCausalLM(PreTrainedModel):
