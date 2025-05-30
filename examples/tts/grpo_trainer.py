@@ -45,8 +45,12 @@ from trl.trainer.utils import generate_model_card, get_comet_experiment_url
 from PIL import Image
 import numpy as np
 import copy
+import tempfile
+import shutil
+import soundfile as sf
 
 from tts_config import *
+from utils.codec_utils import audio_decode_cosyvoice
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -172,6 +176,21 @@ class Qwen2VLGRPOTrainer(Trainer):
             args.per_device_train_batch_size = 1
         
         self.decode_config = decode_config
+        
+        # Audio configuration parameters
+        self.vocab_config = vocab_config
+        # Get audio processing parameters from configs
+        if hasattr(vocab_config, 'code_layer') and vocab_config is not None:
+            self.code_layer = vocab_config.code_layer
+        else:
+            self.code_layer = getattr(model.config.vocab_config, 'code_layer', 1) if hasattr(model.config, 'vocab_config') else 1
+            
+        # Set default values for audio processing
+        self.num_latency_tokens = getattr(decode_config, 'num_latency_tokens', 0) if decode_config else 0
+        self.speech_sample_rate = getattr(decode_config, 'speech_sample_rate', 24000) if decode_config else 24000
+        
+        # Set temporal flag (used for logging, defaulting to False for TTS)
+        self.temporal = getattr(script_args, 'temporal', False) if script_args else False
 
         # Models
         # Trained model
@@ -661,13 +680,42 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         
         # Decode the generated completions
-        completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-        if is_conversational(inputs[0]):
-            completions = [[{"role": "assistant", "content": completion}] for completion in completions]
+        # completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
+        # if is_conversational(inputs[0]):
+        #     completions = [[{"role": "assistant", "content": completion}] for completion in completions]
             
+        # Extract prompts from inputs for reward computation
+        prompts = []
+        prompts_for_reward = []
+        for example in inputs:
+            if "prompt" in example:
+                prompts.append(example["prompt"])
+            elif "source_texts" in example:
+                prompts.append(example["source_texts"])
+                prompts_for_reward.append({"source_prompt": example["source_texts"], "emotion_prompt": example["emotion_text_prompt"]})
+            else:
+                # Fallback: create a simple prompt
+                prompts.append("Generate audio")
+                
+        # Need to fix completion_ids reference - use the first completion for masking
+        completion_ids = all_completions[0] if all_completions else torch.tensor([])
+        
+        # Create prompt_completion_ids by concatenating prompt and completions
+        prompt_length = prompt_ids.size(1)
+        # For TTS, we assume completions are audio tokens, not text tokens to be concatenated
+        # We'll use completion_ids directly for masking, but create placeholder for logit computation
+        if len(all_completions) > 0:
+            # Stack all completions for batch processing
+            completion_ids_batch = torch.stack([comp for comp in all_completions], dim=0)
+            # Create prompt_completion_ids by repeating prompt_ids for each completion
+            prompt_ids_repeated = prompt_ids.unsqueeze(0).repeat(len(all_completions), 1)
+            prompt_completion_ids = torch.cat([prompt_ids_repeated, completion_ids_batch], dim=1)
+        else:
+            prompt_completion_ids = prompt_ids.unsqueeze(0)
+        
         # Compute the rewards
-        prompts = [prompt for prompt in prompts for _ in range(self.num_generations)]
-        rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
+        prompts_for_reward = [prompt for prompt in prompts_for_reward for _ in range(self.num_generations)]
+        rewards_per_func = torch.zeros(len(prompts_for_reward), len(self.reward_funcs), device=device)
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
@@ -677,8 +725,69 @@ class Qwen2VLGRPOTrainer(Trainer):
                 for example in inputs:
                     # Repeat each value in the column for `num_generations` times
                     reward_kwargs[key].extend([example[key]] * self.num_generations)
-            output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+            
+            # Convert all_completions (audio tokens) to audio files
+            audio_outputs = []
+            codec_decoder = model.codec_decoder  # Get codec decoder from model
+            
+            # Get audio prompt path if available
+            audio_prompt_path = None
+            if len(inputs) > 0 and 'neutral_speaker_wav' in inputs[0]:
+                audio_prompt_path = "/root/EmoVoice/EmoVoice-DB/" + inputs[0]['neutral_speaker_wav']
+            
+            # Create temporary directory for audio files
+            temp_dir = tempfile.mkdtemp()
+            
+            try:
+                for completion_idx, completion in enumerate(all_completions):
+                    try:
+                        # Prepare audio_tokens format - ensure it's in the right format for cosyvoice
+                        if isinstance(completion, list):
+                            # If completion is already a list of tokens per layer
+                            audio_tokens = completion if self.code_layer == 1 else [completion[layer] if layer < len(completion) else completion[0] for layer in range(self.code_layer)]
+                        else:
+                            # If completion is a single tensor, duplicate for multiple layers if needed
+                            audio_tokens = [completion] if self.code_layer == 1 else [completion for _ in range(self.code_layer)]
+                        
+                        # Use cosyvoice decoder to convert tokens to audio
+                        audio_hat = audio_decode_cosyvoice(
+                            audio_tokens,
+                            model.config,  # model_config
+                            codec_decoder,
+                            audio_prompt_path,
+                            self.code_layer,
+                            self.num_latency_tokens,
+                            speed=1.0
+                        )
+                        
+                        if audio_hat is not None:
+                            # Save as temporary wav file
+                            temp_wav_path = os.path.join(temp_dir, f"completion_{completion_idx}.wav")
+                            sf.write(temp_wav_path, audio_hat.squeeze().cpu().numpy(), self.speech_sample_rate)
+                            audio_outputs.append(temp_wav_path)
+                            print(f"Successfully converted completion {completion_idx} to audio: {temp_wav_path}")
+                        else:
+                            print(f"Warning: Failed to decode audio for completion {completion_idx} - audio_hat is None")
+                            audio_outputs.append(None)
+                            
+                    except Exception as e:
+                        print(f"Error decoding completion {completion_idx}: {e}")
+                        audio_outputs.append(None)
+                        
+            except Exception as e:
+                print(f"Error in audio conversion process: {e}")
+                # If conversion fails, pass the original tokens
+                audio_outputs = all_completions
+            
+            output_reward_func = reward_func(prompts=prompts_for_reward, audio_outputs=audio_outputs, **reward_kwargs)
             rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
+            
+            # Clean up temporary files after reward computation
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to cleanup temporary directory {temp_dir}: {cleanup_error}")
         
 
         
@@ -780,6 +889,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         self._metrics["all_correct"].append(correct_ratio)
         
         if self.temporal:
+            temporal_rewards = torch.tensor([0.5]).to(device)
             temporal_rewards_list = self.accelerator.gather_for_metrics(temporal_rewards)
             self._metrics["temporal_rewards"].append(self.accelerator.gather_for_metrics(temporal_rewards_list).mean().item())
         

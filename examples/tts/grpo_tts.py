@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 import logging
 import hydra
+from openai import OpenAI
+import os
+import base64
 
 from datasets import load_dataset, load_from_disk
 
@@ -33,8 +36,9 @@ from tts_config import *
 from slam_llm.utils.model_utils import get_custom_model_factory
 from slam_llm.utils.dataset_utils import get_preprocessed_dataset
 
+os.environ["OPENAI_API_KEY"] = "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"
 
-def accuracy_reward(completions, solution, **kwargs):
+def accuracy_reward(prompts, audio_outputs, **kwargs):
     
     def extract_answer(text):
         pattern = r'<answer>\s*(.*?)\s*</answer>'
@@ -43,85 +47,51 @@ def accuracy_reward(completions, solution, **kwargs):
             return match.group(1).strip()
         return ""
 
-    def normalize_number(num_str):
-        try:
-            num_str = num_str.replace(',', '')
-            return float(num_str)
-        except Exception as e:
-            print(f"Error converting '{num_str}' to float: {e}")
-            return None
-
-    def wer(reference, hypothesis):
-        ref_words = reference.split()
-        hyp_words = hypothesis.split()
-        m = len(ref_words)
-        n = len(hyp_words)
-        d = [[0]*(n+1) for _ in range(m+1)]
-        for i in range(m+1):
-            d[i][0] = i
-        for j in range(n+1):
-            d[0][j] = j
-        for i in range(1, m+1):
-            for j in range(1, n+1):
-                if ref_words[i-1] == hyp_words[j-1]:
-                    d[i][j] = d[i-1][j-1]
-                else:
-                    d[i][j] = 1 + min(d[i-1][j], d[i][j-1], d[i-1][j-1])
-        return d[m][n] / max(1, m)
-
-
-    def compute_rouge_score(reference, hypothesis, use_stemmer=True):
-        # scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=use_stemmer)
-        # scores = scorer.score(reference, hypothesis)
-        # average_fmeasure = (scores['rouge1'].fmeasure + scores['rouge2'].fmeasure + scores['rougeL'].fmeasure) / 3
-        # return average_fmeasure
-        return 0.0  # Placeholder for actual ROUGE score computation
+    def convert_to_base64(audio_sample): 
+        base64_audio = base64.b64encode(audio_sample).decode('utf-8')
+        return base64_audio
     
-
-    question_type = kwargs['problem_type'][0]
+    client = OpenAI()
     
-    contents = [completion[0]["content"] for completion in completions]
     current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
     rewards = []
 
-    for content, sol in zip(contents, solution):
+
+    for prompt, audio_output in zip(prompts, audio_outputs):
     
         try:
-            output_ans = extract_answer(content)
-            gt_ans = extract_answer(sol)
-            if question_type == "multiple choice":
-                reward = 1.0 if output_ans.strip() == gt_ans.strip() else 0.0
-            elif question_type == "numerical":
-                gt_has_decimal = ("." in gt_ans) or ("," in gt_ans)
-                out_has_decimal = ("." in output_ans) or ("," in output_ans)
-                if gt_has_decimal != out_has_decimal:
-                    reward = 0.0
-                else:
-                    gt_number = normalize_number(gt_ans)
-                    out_number = normalize_number(output_ans)
-                    if gt_number is None or out_number is None:
-                        reward = 0.0
-                    else:
-                        reward = 1.0 if round(gt_number, 2) == round(out_number, 2) else 0.0
-            elif question_type == "OCR":
-                error_rate = wer(gt_ans, output_ans)
-                reward = 1 - error_rate
+            base64_audio = convert_to_base64(audio_output)
+            source_prompt = prompt["source_prompt"]
+            emotion_prompt = prompt["emotion_prompt"]
+            completion = client.chat.completions.create(
+            model="gpt-4o-audio-preview",
+            messages=[
+                {"role": "developer", "content": "You are a strict assistant who tries to provide precise evaluation. You are given a text message and an audio input. In the text message, there is a target text and a emotional prompt. You have to decide how the input audio conveyed the emotion described in the emotional prompt. Rate the audio from 0 to 10, where 0 is the worst and 10 is the best. Output only the rating number between <answer> and </answer>, with no further explanation. "},
+                {"role": "user", 
+                "content": [
+                    {"type": "text", "text": f"The text message is: {source_prompt}. The emotional prompt is : {emotion_prompt}"},
+                    {
+                        "type": "input_audio", 
+                        "input_audio":
+                        {
+                            "data": base64_audio,
+                            "format": "wav"
+                        }
+                    }
+                ]
+                }
+            ]
+            )
+            reward_str = extract_answer(completion.choices[0].message.content)
+            if reward_str == "": 
+                print(f"Invalid reward")
+                reward = 1.0
+            else: 
+                reward = float(reward_str) / 10.0
                 reward = max(0.0, min(1.0, reward))
-            elif question_type == "free-form":
-                score = compute_rouge_score(gt_ans, output_ans)
-                reward = max(0.0, min(1.0, score))
-            elif question_type == "regression":
-                gt_number = normalize_number(gt_ans)
-                out_number = normalize_number(output_ans)
-                if gt_number is None or out_number is None:
-                    reward = 0.0
-                rel_diff = (abs(out_number - gt_number) + 1e-9) / (abs(gt_number) + 1e-9)
-                rel_diff = min(1.0, max(0.0, rel_diff))
-                reward = 1 - rel_diff
-            else:
-                reward = 0.0
+
         except Exception as e:
-            print(f"Error in reward_fn for question_type '{question_type}': {e}")
+            print(f"Error in reward_fn")
             reward = 0.0
     
         rewards.append(reward)
@@ -131,23 +101,14 @@ def accuracy_reward(completions, solution, **kwargs):
             # local_rank = int(os.getenv("LOCAL_RANK", 0))
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"------------- {current_time} Accuracy reward: {reward} -------------\n")
-                f.write(f"Content: {content}\n")
-                f.write(f"Solution: {sol}\n")
+                # f.write(f"Content: {content}\n")
+                # f.write(f"Solution: {sol}\n")
             
     return rewards
 
 
-def format_reward(completions, **kwargs):
-    """Reward function that checks if the completion has a specific format."""
-    pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    completion_contents = [completion[0]["content"] for completion in completions]
-    matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
-    return [1.0 if match else 0.0 for match in matches]
-
-
 reward_funcs_registry = {
     "accuracy": accuracy_reward,
-    "format": format_reward,
 }
 
 SYSTEM_PROMPT = (
@@ -187,7 +148,7 @@ def main(kwargs: DictConfig):
     OmegaConf.set_struct(kwargs,True)
     
     # Get reward functions
-    reward_funcs = [reward_funcs_registry[func] for func in ["accuracy", "format"]]
+    reward_funcs = [reward_funcs_registry[func] for func in ["accuracy"]]
 
     	# Set log
     if not os.path.exists(os.path.dirname(log_config.log_file)):
