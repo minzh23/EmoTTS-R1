@@ -158,6 +158,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         reward_funcs: Union[RewardFunc, list[RewardFunc]],
         args: GRPOConfig = None,
         script_args = None,
+        model_config: Optional[ModelConfig] = None,
         decode_config: Optional[DecodeConfig] = None,
         vocab_config: Optional[VocabConfig] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
@@ -182,6 +183,8 @@ class Qwen2VLGRPOTrainer(Trainer):
             args.report_to = []
         
         self.decode_config = decode_config
+        self.model_config = model_config
+        self.train_config = script_args
         
         # Audio configuration parameters
         self.vocab_config = vocab_config
@@ -233,8 +236,8 @@ class Qwen2VLGRPOTrainer(Trainer):
                 # Since create_reference_model might not work properly with our custom model,
                 # we'll recreate it using the factory function
                 if hasattr(model, 'config'):
-                    train_config = model.config.train_config
-                    model_config = model.config.model_config
+                    train_config = self.train_config
+                    model_config = self.model_config
                     self.ref_model, _ = model_factory(train_config, model_config, **model_init_kwargs)
                 else:
                     # Fallback: try create_reference_model
@@ -532,6 +535,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
             all_completions = []    
+            all_prompt_completion_ids = [] 
             all_per_token_logps = []
             for i in range(self.num_generations):
                 completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config, decode_config=self.decode_config)
@@ -542,6 +546,7 @@ class Qwen2VLGRPOTrainer(Trainer):
                 completion_length = completion_ids.size(1)
                 prompt_ids = prompt_completion_ids[:, :prompt_length]
                 prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension
+                all_prompt_completion_ids.append(prompt_completion_ids)
                 prompt_inputs_copy = copy.deepcopy(prompt_inputs)
                 prompt_inputs_copy.pop("input_ids")
                 prompt_inputs_copy.pop("attention_mask")
@@ -556,29 +561,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             completion_ids = pad_sequence(all_completions, batch_first=True, padding_value=-100)
             per_token_logps = pad_sequence(all_per_token_logps, batch_first=True, padding_value=-100)
             # completion_ids = prompt_completion_ids[:, prompt_length:]
-            # prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0)
-            
-            # if self.temporal:
-                
-            #     if videos:
-            
-            #         shuffled_prompt_completion_ids = unwrapped_model.generate(**shuffled_prompt_inputs, generation_config=self.shuffled_generation_config)
-            #         shuffled_prompt_length = shuffled_prompt_ids.size(1)
-            #         shuffled_prompt_ids = shuffled_prompt_completion_ids[:, :shuffled_prompt_length]
-            #         shuffled_completion_ids = shuffled_prompt_completion_ids[:, shuffled_prompt_length:]
-            #         shuffled_prompt_mask = prompt_mask.repeat_interleave(self.shuffled_num_generations, dim=0)
-                    
-            #     else:
-                    
-            #         shuffled_prompt_completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.dummy_generation_config)
-
-        
-        # print('path:', input_copy[0]['content'][0][inputs[0]['data_type']])   
-        # print('problem_id:', inputs[0]['problem_id'])       
-        # print('prompt_length:', prompt_length)
-                
-        
-        
+            # prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0) 
         
         # Mask everything after the first EOS token
         is_eos = completion_ids == self.vocab_config.eoa
@@ -597,15 +580,15 @@ class Qwen2VLGRPOTrainer(Trainer):
                     prompt_inputs_copy.pop("input_ids", None)
                     prompt_inputs_copy.pop("attention_mask", None)
                     prompt_inputs_copy["grpo_mode"] = True
-                    
-                    # Create prompt_completion_ids by stacking prompt and completion tokens
-                    prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
-                    prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
-                    
-                    ref_per_token_logps = self._get_per_token_logps(self.ref_model, prompt_completion_ids, **prompt_inputs_copy)
-                    ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
-                    ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
-                    ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
+                    all_ref_per_token_logps = []
+                    for i in range(self.num_generations):
+                        prompt_completion_ids = all_prompt_completion_ids[i]
+                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
+                        ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
+                        ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)  # (B, L-1, V)
+                        ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
+                        all_ref_per_token_logps.append(ref_per_token_logps)
+                    ref_per_token_logps = pad_sequence(all_ref_per_token_logps, batch_first=True, padding_value=-100)
                 else:
                     # Use PEFT adapter disabling approach
                     with self.accelerator.unwrap_model(model).disable_adapter():
@@ -713,8 +696,9 @@ class Qwen2VLGRPOTrainer(Trainer):
                             audio_tokens = completion if self.code_layer == 1 else [completion[layer] if layer < len(completion) else completion[0] for layer in range(self.code_layer)]
                         else:
                             # If completion is a single tensor, duplicate for multiple layers if needed
-                            audio_tokens = [completion] if self.code_layer == 1 else [completion for _ in range(self.code_layer)]
-                        
+                            completion_length = completion.shape[0] // self.code_layer
+                            audio_tokens = [completion] if self.code_layer == 1 else [completion[i*completion_length:(i+1)*completion_length] for i in range(self.code_layer)]
+
                         # Use cosyvoice decoder to convert tokens to audio
                         audio_hat = audio_decode_cosyvoice(
                             audio_tokens,
@@ -854,10 +838,10 @@ class Qwen2VLGRPOTrainer(Trainer):
         self._metrics["all_wrong"].append(wrong_ratio)
         self._metrics["all_correct"].append(correct_ratio)
         
-        if self.temporal:
-            temporal_rewards = torch.tensor([0.5]).to(device)
-            temporal_rewards_list = self.accelerator.gather_for_metrics(temporal_rewards)
-            self._metrics["temporal_rewards"].append(self.accelerator.gather_for_metrics(temporal_rewards_list).mean().item())
+        # if self.temporal:
+        #     temporal_rewards = torch.tensor([0.5]).to(device)
+        #     temporal_rewards_list = self.accelerator.gather_for_metrics(temporal_rewards)
+        #     self._metrics["temporal_rewards"].append(self.accelerator.gather_for_metrics(temporal_rewards_list).mean().item())
         
         self._metrics["reward"].append(self.accelerator.gather_for_metrics(rewards).mean().item())
 

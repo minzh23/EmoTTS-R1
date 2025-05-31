@@ -193,6 +193,7 @@ def main(kwargs: DictConfig):
         model=model,
         reward_funcs=reward_funcs,
         script_args=train_config,
+        model_config=model_config,
         decode_config=decode_config,
         vocab_config=model_config.vocab_config,
         # script_args=script_args,
@@ -217,7 +218,7 @@ def main(kwargs: DictConfig):
 
 
 if __name__ == "__main__":
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    # local_rank = int(os.environ.get("LOCAL_RANK", 0))
     # if local_rank == 0:
     #     import debugpy
     #     debugpy.listen(("127.0.0.1", 5678))
