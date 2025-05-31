@@ -201,6 +201,7 @@ def main(kwargs: DictConfig):
         # processing_class=Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct",padding_side="right"),
         # peft_config=get_peft_config(model_args),
         # attn_implementation=model_config.attn_implementation,
+        kwargs=kwargs, 
     )
     
     # if train_config.resume_from_checkpoint is not None:

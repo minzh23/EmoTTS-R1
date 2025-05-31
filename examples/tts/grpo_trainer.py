@@ -52,6 +52,9 @@ import soundfile as sf
 
 from tts_config import *
 from utils.codec_utils import audio_decode_cosyvoice
+# Add import for SlamTTSForCausalLM model factory
+from model.slam_model_tts import model_factory, SlamTTSForCausalLM
+from omegaconf import DictConfig
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -164,6 +167,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         callbacks: Optional[list[TrainerCallback]] = None,
         optimizers: tuple[Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler.LambdaLR]] = (None, None),
         peft_config: Optional["PeftConfig"] = None,
+        kwargs: Optional[DictConfig] = None,
         max_pixels: Optional[int] = 12845056,
         min_pixels: Optional[int] = 3136,
         attn_implementation: str = "flash_attention_2",
@@ -194,94 +198,57 @@ class Qwen2VLGRPOTrainer(Trainer):
         # Set temporal flag (used for logging, defaulting to False for TTS)
         self.temporal = getattr(script_args, 'temporal', False) if script_args else False
 
-        # Models
-        # Trained model
-        # model_init_kwargs = args.model_init_kwargs or {}
-        # model_init_kwargs["attn_implementation"] = attn_implementation
-        # if isinstance(model, str):
-        #     model_id = model
-        #     torch_dtype = model_init_kwargs.get("torch_dtype")
-        #     if isinstance(torch_dtype, torch.dtype) or torch_dtype == "auto" or torch_dtype is None:
-        #         pass  # torch_dtype is already a torch.dtype or "auto" or None
-        #     elif isinstance(torch_dtype, str):  # it's a str, but not "auto"
-        #         torch_dtype = getattr(torch, torch_dtype)
-        #         model_init_kwargs["torch_dtype"] = torch_dtype
-        #     else:
-        #         raise ValueError(
-        #             "Invalid `torch_dtype` passed to `GRPOConfig`. Expected either 'auto' or a string representing "
-        #             f"a `torch.dtype` (e.g., 'float32'), but got {torch_dtype}."
-        #         )
-        #     # Disable caching if gradient checkpointing is enabled (not supported)
-        #     model_init_kwargs["use_cache"] = (
-        #         False if args.gradient_checkpointing else model_init_kwargs.get("use_cache")
-        #     )
-        #     if "Qwen2-VL" in model_id:
-        #         model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        #     elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
-        #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        #     elif "Aria" in model_id:
-        #         model_init_kwargs.pop("use_cache")
-        #         model = AriaForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        #     else:
-        #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        #         # model = Qwen2VLForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
-        # else:
-        #     model_id = model.config._name_or_path
-        #     if args.model_init_kwargs is not None:
-        #         raise ValueError(
-        #             "You passed `model_init_kwargs` to the `GRPOConfig`, but your model is already instantiated. "
-        #             "This argument can only be used when the `model` argument is a string."
-        #         )
+        # Extract model initialization kwargs and determine model type
+        model_init_kwargs = kwargs if kwargs is not None else {}
+        
+        # Determine if this is a SlamTTSForCausalLM model
+        if isinstance(model, SlamTTSForCausalLM):
+            model_id = None  # No model path for existing instances
+            is_slam_model = True
+        elif hasattr(model, 'slam_model'):
+            model_id = None
+            is_slam_model = True
+        else:
+            model_id = model if isinstance(model, str) else getattr(model.config, '_name_or_path', None)
+            is_slam_model = False
 
-        # if peft_config is not None:
-        #     model = get_peft_model(model, peft_config)
+        # Reference model initialization
+        self.ref_model = None
+        if is_deepspeed_zero3_enabled():
+            # For DeepSpeed Zero3, we need to create a fresh reference model
+            if is_slam_model and hasattr(model, 'config'):
+                # For SlamTTSForCausalLM, recreate using the original configs
+                train_config = model.config.train_config
+                model_config = model.config.model_config
+                # Create reference model using model_factory
+                self.ref_model, _ = model_factory(train_config, model_config, **model_init_kwargs)
+            else:
+                # Fallback to original model creation for other model types
+                if model_id:
+                    self.ref_model = AutoModelForCausalLM.from_pretrained(model_id, **model_init_kwargs)
+        elif peft_config is None:
+            # If PEFT configuration is not provided, create a reference model based on the initial model.
+            if is_slam_model:
+                # For SlamTTSForCausalLM, we need to create a deep copy or recreate the model
+                # Since create_reference_model might not work properly with our custom model,
+                # we'll recreate it using the factory function
+                if hasattr(model, 'config'):
+                    train_config = model.config.train_config
+                    model_config = model.config.model_config
+                    self.ref_model, _ = model_factory(train_config, model_config, **model_init_kwargs)
+                else:
+                    # Fallback: try create_reference_model
+                    self.ref_model = create_reference_model(model)
+            else:
+                self.ref_model = create_reference_model(model)
+        else:
+            # If PEFT is used, the reference model is not needed since the adapter can be disabled
+            # to revert to the initial model.
+            self.ref_model = None
 
-        #self.ref_model = None
-        # Reference model
-        # if is_deepspeed_zero3_enabled():
-        #     if "Qwen2-VL" in model_id:
-        #         self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        #     elif "Qwen2.5-VL" in model_id or "4D-LLM" in model_id:
-        #         self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        #     elif "Aria" in model_id:
-        #         self.ref_model = AriaForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        #     else:
-        #         self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        #         # self.ref_model = Qwen2VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-        # elif peft_config is None:
-        #     # If PEFT configuration is not provided, create a reference model based on the initial model.
-        #     self.ref_model = create_reference_model(model)
-        # else:
-        #     # If PEFT is used, the reference model is not needed since the adapter can be disabled
-        #     # to revert to the initial model.
-        #     self.ref_model = None
-
-        # Processing class
-        # if processing_class is None:
-        #     if "Qwen2-VL" in model_id or "Qwen2.5-VL" in model_id or "Aria" in model_id or True:
-        #         processing_class = AutoProcessor.from_pretrained(model_id)
-        #         pad_token_id = processing_class.tokenizer.pad_token_id
-        #         processing_class.pad_token_id = pad_token_id
-        #         processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
-        #         if "Qwen" in model_id or "Qwen2.5-VL" in model_id:
-        #             processing_class.image_processor.max_pixels = max_pixels
-        #             processing_class.image_processor.min_pixels = min_pixels
-        #     else:
-        #         processing_class = AutoTokenizer.from_pretrained(model.config._name_or_path, padding_side="left")
-        #         pad_token_id = processing_class.pad_token_id
-        # else:
-        #     pad_token_id = processing_class.tokenizer.pad_token_id
-        #     processing_class.pad_token_id = pad_token_id
-        #     processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
-            
         # Reward functions
         if not isinstance(reward_funcs, list):
             reward_funcs = [reward_funcs]
-        # for i, reward_func in enumerate(reward_funcs):
-        #     if isinstance(reward_func, str):
-        #         reward_funcs[i] = AutoModelForSequenceClassification.from_pretrained(
-        #             reward_func, num_labels=1, **model_init_kwargs
-        #         )+-
         self.reward_funcs = reward_funcs
 
         # Reward processing class
@@ -332,14 +299,6 @@ class Qwen2VLGRPOTrainer(Trainer):
         )
         self.beta = script_args.beta
 
-        # The trainer estimates the number of FLOPs (floating-point operations) using the number of elements in the
-        # input tensor associated with the key "input_ids". However, in GRPO, the sampled data does not include the
-        # "input_ids" key. Instead, the available keys is "prompt". As a result, the trainer issues the warning:
-        # "Could not estimate the number of tokens of the input, floating-point operations will not be computed." To
-        # suppress this warning, we set the "estimate_tokens" key in the model's "warnings_issued" dictionary to True.
-        # This acts as a flag to indicate that the warning has already been issued.
-        # model.warnings_issued["estimate_tokens"] = True
-
         # Initialize the metrics
         self._metrics = defaultdict(list)
 
@@ -359,11 +318,12 @@ class Qwen2VLGRPOTrainer(Trainer):
         # self.model_accepts_loss_kwargs to False to enable scaling.
         self.model_accepts_loss_kwargs = False
 
-        # if self.ref_model is not None:
-        #     if self.is_deepspeed_enabled:
-        #         self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
-        #     else:
-        #         self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
+        # Prepare the reference model for training
+        if self.ref_model is not None:
+            if self.is_deepspeed_enabled:
+                self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
+            else:
+                self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
 
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):
@@ -628,86 +588,66 @@ class Qwen2VLGRPOTrainer(Trainer):
         sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
         completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
 
-        # Concatenate prompt_mask with completion_mask for logit computation
-        # attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B*G, P+C)
-        # pixel_values = prompt_inputs["pixel_values"].repeat(self.num_generations, 1)
-        # image_grid_thw = prompt_inputs["image_grid_thw"].repeat_interleave(self.num_generations, dim=0)
-        
-
-        
-        # prompt_inputs.pop("input_ids")
-        # prompt_inputs.pop("attention_mask")
-        
-        # if inputs[0]['data_type'] == 'image':
-        #     prompt_inputs["pixel_values"] = prompt_inputs["pixel_values"].repeat(len(prompt_completion_ids), 1)
-        #     prompt_inputs["image_grid_thw"] = prompt_inputs["image_grid_thw"].repeat(len(prompt_completion_ids), 1)
-        # # import pdb; pdb.set_trace()
-        
-
-        # if inputs[0]['data_type'] == 'video':
-        #     prompt_inputs["pixel_values_videos"] = prompt_inputs["pixel_values_videos"].repeat(len(prompt_completion_ids), 1)
-        #     prompt_inputs["video_grid_thw"] = prompt_inputs["video_grid_thw"].repeat(len(prompt_completion_ids), 1)
-        #     if 'second_per_grid_ts' in prompt_inputs:
-        #         del prompt_inputs["second_per_grid_ts"]
-        #         # prompt_inputs["second_per_grid_ts"] = torch.tensor(prompt_inputs["second_per_grid_ts"]).repeat(len(prompt_completion_ids), 1)
-        
-        # prompt_inputs["depth_values"] = prompt_inputs["depth_values"].repeat(len(prompt_completion_ids), 1)
-        
-        
-        # try:
-        #     per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs)
-        #     per_token_logps = per_token_logps[:, prompt_length - 1 :]
-        # except Exception as e:
-        #     print(f"Error computing per_token_logps: {e}. Setting output to zero.")
-        #     # per_token_logps = torch.tensor(0.0, device=prompt_completion_ids.device, requires_grad=True)
-        #     per_token_logps = self._get_per_token_logps(model, prompt_completion_ids)
-        
+        # Compute reference model logits for KL divergence
         with torch.inference_mode():
             try:
                 if self.ref_model is not None:
-                    ref_per_token_logps = self._get_per_token_logps(self.ref_model, prompt_completion_ids, **prompt_inputs)
+                    # For SlamTTSForCausalLM, use the same input format as the main model
+                    prompt_inputs_copy = copy.deepcopy(prompt_inputs)
+                    prompt_inputs_copy.pop("input_ids", None)
+                    prompt_inputs_copy.pop("attention_mask", None)
+                    prompt_inputs_copy["grpo_mode"] = True
+                    
+                    # Create prompt_completion_ids by stacking prompt and completion tokens
+                    prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+                    prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
+                    
+                    ref_per_token_logps = self._get_per_token_logps(self.ref_model, prompt_completion_ids, **prompt_inputs_copy)
+                    ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
+                    ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
+                    ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
                 else:
+                    # Use PEFT adapter disabling approach
                     with self.accelerator.unwrap_model(model).disable_adapter():
-                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs)
-                ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1 :]
+                        prompt_inputs_copy = copy.deepcopy(prompt_inputs)
+                        prompt_inputs_copy.pop("input_ids", None)
+                        prompt_inputs_copy.pop("attention_mask", None)
+                        prompt_inputs_copy["grpo_mode"] = True
+                        
+                        # Create prompt_completion_ids by stacking prompt and completion tokens
+                        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+                        prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
+                        
+                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
+                        ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
+                        ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
+                        ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
             except Exception as e:
-                print(f"Error computing ref_per_token_logps: {e}. Setting output to zero.")
-                # ref_per_token_logps = torch.tensor(0.0, device=prompt_completion_ids.device)
-                with self.accelerator.unwrap_model(model).disable_adapter():
-                    ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids)
-                ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1 :]
+                print(f"Error computing ref_per_token_logps: {e}. Using adapter disable fallback.")
+                try:
+                    with self.accelerator.unwrap_model(model).disable_adapter():
+                        prompt_inputs_copy = copy.deepcopy(prompt_inputs)
+                        prompt_inputs_copy.pop("input_ids", None)
+                        prompt_inputs_copy.pop("attention_mask", None)
+                        prompt_inputs_copy["grpo_mode"] = True
+                        
+                        # Create prompt_completion_ids by stacking prompt and completion tokens  
+                        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+                        prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
+                        
+                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
+                        ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
+                        ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
+                        ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
+                except Exception as fallback_e:
+                    print(f"Fallback also failed: {fallback_e}. Using zero ref_per_token_logps.")
+                    # Create zero tensor with same shape as per_token_logps
+                    ref_per_token_logps = torch.zeros_like(per_token_logps)
 
         # Compute the KL divergence between the model and the reference model
-        
         x_clamped = torch.clamp(ref_per_token_logps - per_token_logps, min=-10, max=10)  # 限制 x 的范围
         per_token_kl = torch.exp(x_clamped) - x_clamped - 1
-        
-        # if self.temporal and videos:
-        #     shuffled_completions = self.processing_class.batch_decode(shuffled_completion_ids, skip_special_tokens=True)
-        #     if is_conversational(inputs[0]):
-        #         shuffled_completions = [[{"role": "assistant", "content": shuffled_completion}] for shuffled_completion in shuffled_completions]
-                
-        #     # Compute the rewards
-        #     shuffled_prompts = [prompt for prompt in prompts for _ in range(self.shuffled_num_generations)]
-        #     shuffled_rewards_per_func = torch.zeros(len(shuffled_prompts), len(self.reward_funcs), device=device)
-        #     for i, (reward_func, reward_processing_class) in enumerate(
-        #         zip(self.reward_funcs, self.reward_processing_classes)
-        #     ):
-        #         # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-        #         shuffled_reward_kwargs = {key: [] for key in inputs[0].keys() if key not in ["prompt", "completion"]}
-        #         for key in shuffled_reward_kwargs:
-        #             for example in inputs:
-        #                 # Repeat each value in the column for `num_generations` times
-        #                 shuffled_reward_kwargs[key].extend([example[key]] * self.shuffled_num_generations)
-        #         shuffled_output_reward_func = reward_func(prompts=shuffled_prompts, completions=shuffled_completions, **shuffled_reward_kwargs)
-        #         shuffled_rewards_per_func[:, i] = torch.tensor(shuffled_output_reward_func, dtype=torch.float32, device=device)
 
-        
-        # Decode the generated completions
-        # completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-        # if is_conversational(inputs[0]):
-        #     completions = [[{"role": "assistant", "content": completion}] for completion in completions]
-            
         # Extract prompts from inputs for reward computation
         prompts = []
         prompts_for_reward = []
@@ -720,23 +660,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             else:
                 # Fallback: create a simple prompt
                 prompts.append("Generate audio")
-                
-        # Need to fix completion_ids reference - use the first completion for masking
-        completion_ids = all_completions[0] if all_completions else torch.tensor([])
-        
-        # Create prompt_completion_ids by concatenating prompt and completions
-        prompt_length = prompt_ids.size(1)
-        # For TTS, we assume completions are audio tokens, not text tokens to be concatenated
-        # We'll use completion_ids directly for masking, but create placeholder for logit computation
-        # if len(all_completions) > 0:
-        #     # Stack all completions for batch processing
-        #     completion_ids_batch = torch.stack([comp for comp in all_completions], dim=0)
-        #     # Create prompt_completion_ids by repeating prompt_ids for each completion
-        #     prompt_ids_repeated = prompt_ids.unsqueeze(0).repeat(len(all_completions), 1)
-        #     prompt_completion_ids = torch.cat([prompt_ids_repeated, completion_ids_batch], dim=1)
-        # else:
-        #     prompt_completion_ids = prompt_ids.unsqueeze(0)
-        
+
         # Compute the rewards
         prompts_for_reward = [prompt for prompt in prompts_for_reward for _ in range(self.num_generations)]
         rewards_per_func = torch.zeros(len(prompts_for_reward), len(self.reward_funcs), device=device)
