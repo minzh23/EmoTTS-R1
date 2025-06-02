@@ -180,7 +180,9 @@ class Qwen2VLGRPOTrainer(Trainer):
             model_name = "EmoVoice"
             args = GRPOConfig(f"{model_name}-GRPO")
             args.per_device_train_batch_size = 1
-            args.report_to = []
+            args.save_steps = 100
+            args.report_to = ["wandb"]
+            args.output_dir = "/root/autodl-tmp/EmoTTS-R1-Checkpoints"
         
         self.decode_config = decode_config
         self.model_config = model_config
@@ -332,6 +334,8 @@ class Qwen2VLGRPOTrainer(Trainer):
             if isinstance(reward_func, PreTrainedModel):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
 
+        torch.autograd.set_detect_anomaly(True)
+
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
         # By default, this method sets `self._signature_columns` to the model's expected inputs.
@@ -380,113 +384,7 @@ class Qwen2VLGRPOTrainer(Trainer):
         return inputs
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        if return_outputs:
-            raise ValueError("The GRPOTrainer does not support returning outputs")
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # prompts = [x["prompt"] for x in inputs]
-        # prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
-
-                
-        
-        # input_copy = copy.deepcopy(inputs[0]['prompt'])
-        
-        # input_copy = self.remove_none_from_data(input_copy)
-        
-        # if inputs[0]['data_type'] == 'image':
-        #     input_copy[0]['content'][0]['image'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
-        # elif inputs[0]['data_type'] == 'video':
-        #     input_copy[0]['content'][0]['video'] = "/cephfs/shared/yicheng/4D-LLM/Video-R1" + inputs[0]['path'][1:]
-        
-
-        # if "image" in inputs[0]['data_type']:
-        #     videos = None
-        #     grid_key = "image_grid_thw"
-        #     pixel_key = "pixel_values"
-            
-        #     image_files = inputs[0]["path"]
-        #     image_folder = "/cephfs/shared/yicheng/4D-LLM/Video-R1"
-
-        #     if isinstance(image_files, str):
-        #         image_files = [image_files]
-
-        #     images = []
-        #     all_image_tensors = []
-
-        #     for image_file in image_files:
-        #         if not os.path.exists(image_file):
-        #             if not image_file.startswith("http"):
-        #                 if image_file.startswith("./"):
-        #                     image_file = image_file[1:]
-        #                     image_file = os.path.join(image_folder, image_file[1:])
-        #         img = Image.open(image_file).convert("RGB")
-        #         img = np.array(img)[:, :, ::-1]
-        #         image_tensor, _ = image2tensor(img)
-        #         image = get_image_info(image_file, self.min_pixels, self.max_pixels, image_tensor.shape[3], image_tensor.shape[2])
-        #         images.append(image)
-        #         # image_tensor_flat = image_tensor.permute(1, 0, 2, 3).contiguous().view(image_tensor.shape[1], -1)
-        #         # all_image_tensors.append(image_tensor_flat)
-
-        # elif "video" in inputs[0]['data_type']:
-        #     is_video = True
-        #     images=None
-        #     grid_key = "video_grid_thw"
-        #     pixel_key = "pixel_values_videos"
-
-        #     video_files = inputs[0]['path']
-        #     video_folder = "/cephfs/shared/yicheng/4D-LLM/Video-R1"
-
-        #     if isinstance(video_files, str):
-        #         video_files = [video_files]
-
-        #     videos = []
-        #     all_image_tensors = []
-        #     for video_file in video_files:
-        #         if not os.path.exists(video_file):
-        #             if not video_file.startswith("http"):
-        #                 if video_file.startswith("./"):
-        #                     video_file = video_file[1:]
-        #                     video_file = os.path.join(video_folder, video_file[1:])
-        #         example_frame = read_frame_decord(video_file, 0)
-        #         example_tensor, _ = image2tensor(example_frame)
-        #         resized_h, resized_w = example_tensor.shape[:2]
-        #         video_input, video_kwargs = get_video_info(video_file, self.min_pixels, self.max_pixels, resized_w, resized_h, 1.0)
-        #         # for raw_image in video_input:
-        #         #     np_img = (raw_image.permute(1,2,0).cpu().numpy()).astype(np.uint8)
-        #         #     np_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
-        #         #     image_tensor, _ = image2tensor(np_img)
-        #         #     image_tensor_flat = image_tensor.permute(1, 0, 2, 3).contiguous().view(image_tensor.shape[1], -1)
-        #         #     all_image_tensors.append(image_tensor_flat)
-
-        #         video_input = smart_scale(video_input)
-        #         videos.append(video_input)
-
-        # else:
-        #     grid_key = None
-        #     pixel_key = None
-        #     images=None
-        #     videos=None
-
-        # try:
-        # images, videos, video_kwargs = process_vision_info(input_copy, return_video_kwargs=True)
-        # except Exception as e:
-        #     print(f"process_vision_info error, using fixed data, {e}")
-        #     if inputs[0]['data_type'] == 'image':
-        #         input_copy[0]['content'][0]['image'] = os.getcwd() + "/Video-R1-data" + '/Math/Multimath-300k/17ff4c7d14c388134de02381b1fc2824.png'
-        #     elif inputs[0]['data_type'] == 'video':
-        #         input_copy[0]['content'][0]['video'] = os.getcwd() + "/Video-R1-data" + '/LLaVA-Video-178K/liwei_youtube_videos/videos/youtube_video_2024/ytb_7nRmsEw7nsE.mp4'
-                
-        #     images, videos, video_kwargs = process_vision_info(input_copy, return_video_kwargs=True)
-        
-        
-        # prompt_inputs = self.processing_class(
-        #     text=copy.deepcopy(prompts_text),
-        #     images=images,
-        #     videos=videos,
-        #     return_tensors="pt",
-        #     padding=False,
-        #     **video_kwargs,
-        # )
-        
         
         prompt_inputs = super()._prepare_inputs(inputs[0])
 
@@ -504,34 +402,6 @@ class Qwen2VLGRPOTrainer(Trainer):
             prompt_ids = prompt_ids[:, -self.max_prompt_length :]
             prompt_mask = prompt_mask[-self.max_prompt_length :]
         
-        # image_tensors = torch.cat(all_image_tensors, dim=1)
-        # prompt_inputs["depth_values"] = image_tensors
-        # prompt_inputs = prompt_inputs.to(model.device)
-
-        # if self.temporal and videos:
-        #     indices = torch.randperm(videos[0].size(0))
-        #     # t, h, w = prompt_inputs["video_grid_thw"]
-        #     # image_tensors = image_tensors.view(3, t, h, w).permute(1, 0, 2, 3).contiguous()
-        #     # image_tensors = image_tensors[indices].permute(1, 0, 2, 3).contiguous()
-        #     # image_tensors = image_tensors.view(3, -1)
-        #     shuffled_video_inputs = [videos[0][indices]]
-        #     shuffled_prompt_inputs = self.processing_class(
-        #         text=copy.deepcopy(prompts_text),
-        #         images=images,
-        #         videos=shuffled_video_inputs,
-        #         return_tensors="pt",
-        #         padding=True,
-        #         padding_side="right",
-        #         add_special_tokens=False,
-        #     )
-        #     shuffled_prompt_inputs = super()._prepare_inputs(shuffled_prompt_inputs)
-        #     shuffled_prompt_ids, shuffled_prompt_mask = shuffled_prompt_inputs["input_ids"], shuffled_prompt_inputs["attention_mask"]
-        #     if self.max_prompt_length is not None:
-        #         shuffled_prompt_ids = shuffled_prompt_ids[:, -self.max_prompt_length :]
-        #         shuffled_prompt_mask = shuffled_prompt_mask[:, -self.max_prompt_length :]
-            # shuffled_prompt_inputs["depth_values"] = image_tensors
-        
-        
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
             all_completions = []    
@@ -539,10 +409,12 @@ class Qwen2VLGRPOTrainer(Trainer):
             all_per_token_logps = []
             for i in range(self.num_generations):
                 completion_ids = unwrapped_model.generate(**prompt_inputs, generation_config=self.generation_config, decode_config=self.decode_config)
-                completion_ids[self.vocab_config.code_layer] = completion_ids[self.vocab_config.code_layer][:completion_ids[0].shape[0]]  # Replace EOS token with EOA token
+                clipped_text_ids = completion_ids[self.vocab_config.code_layer][:completion_ids[0].shape[0]].clone()
+                completion_ids[self.vocab_config.code_layer] = clipped_text_ids
                 completion_ids = torch.stack(completion_ids, dim=0)
-                prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
-                prompt_length = prompt_ids.size(1)
+                cur_prompt_ids = prompt_ids.clone()
+                prompt_completion_ids = torch.cat((cur_prompt_ids, completion_ids), dim=1)
+                prompt_length = cur_prompt_ids.size(1)
                 completion_length = completion_ids.size(1)
                 prompt_ids = prompt_completion_ids[:, :prompt_length]
                 prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension
@@ -551,25 +423,24 @@ class Qwen2VLGRPOTrainer(Trainer):
                 prompt_inputs_copy.pop("input_ids")
                 prompt_inputs_copy.pop("attention_mask")
                 prompt_inputs_copy["grpo_mode"] = True
+                prompt_completion_ids = prompt_completion_ids.clone()
                 per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
                 per_token_logps = [per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
-                completion_ids = completion_ids[:self.vocab_config.code_layer, :].reshape(completion_length * self.vocab_config.code_layer)
+                flat_completion_ids = completion_ids[:self.vocab_config.code_layer, :].reshape(completion_length * self.vocab_config.code_layer)
                 per_token_logps = torch.stack(per_token_logps, dim=0)  # (B, L-1, V)
-                per_token_logps = per_token_logps.reshape(per_token_logps.size(1) * self.vocab_config.code_layer)
-                all_completions.append(completion_ids)
-                all_per_token_logps.append(per_token_logps)
+                flat_per_token_logps = per_token_logps.reshape(per_token_logps.size(1) * self.vocab_config.code_layer)
+                all_completions.append(flat_completion_ids)
+                all_per_token_logps.append(flat_per_token_logps)
             completion_ids = pad_sequence(all_completions, batch_first=True, padding_value=-100)
             per_token_logps = pad_sequence(all_per_token_logps, batch_first=True, padding_value=-100)
-            # completion_ids = prompt_completion_ids[:, prompt_length:]
-            # prompt_mask = prompt_mask.repeat_interleave(self.num_generations, dim=0) 
-        
+
         # Mask everything after the first EOS token
-        is_eos = completion_ids == self.vocab_config.eoa
+        is_eos = completion_ids == -100
         device = self.accelerator.device
         eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
         eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
         sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+        completion_mask = (sequence_indices < eos_idx.unsqueeze(1)).int()
 
         # Compute reference model logits for KL divergence
         with torch.inference_mode():
@@ -589,43 +460,8 @@ class Qwen2VLGRPOTrainer(Trainer):
                         ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
                         all_ref_per_token_logps.append(ref_per_token_logps)
                     ref_per_token_logps = pad_sequence(all_ref_per_token_logps, batch_first=True, padding_value=-100)
-                else:
-                    # Use PEFT adapter disabling approach
-                    with self.accelerator.unwrap_model(model).disable_adapter():
-                        prompt_inputs_copy = copy.deepcopy(prompt_inputs)
-                        prompt_inputs_copy.pop("input_ids", None)
-                        prompt_inputs_copy.pop("attention_mask", None)
-                        prompt_inputs_copy["grpo_mode"] = True
-                        
-                        # Create prompt_completion_ids by stacking prompt and completion tokens
-                        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
-                        prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
-                        
-                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
-                        ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
-                        ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
-                        ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
             except Exception as e:
                 print(f"Error computing ref_per_token_logps: {e}. Using adapter disable fallback.")
-                try:
-                    with self.accelerator.unwrap_model(model).disable_adapter():
-                        prompt_inputs_copy = copy.deepcopy(prompt_inputs)
-                        prompt_inputs_copy.pop("input_ids", None)
-                        prompt_inputs_copy.pop("attention_mask", None)
-                        prompt_inputs_copy["grpo_mode"] = True
-                        
-                        # Create prompt_completion_ids by stacking prompt and completion tokens  
-                        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
-                        prompt_completion_ids = prompt_completion_ids.unsqueeze(0)  # Add batch dimension for processing
-                        
-                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, **prompt_inputs_copy)
-                        ref_per_token_logps = [ref_per_token_logps[i][:, prompt_length - 1 :].squeeze(0) for i in range(self.vocab_config.code_layer)]
-                        ref_per_token_logps = torch.stack(ref_per_token_logps, dim=0)
-                        ref_per_token_logps = ref_per_token_logps.reshape(ref_per_token_logps.size(1) * self.vocab_config.code_layer)
-                except Exception as fallback_e:
-                    print(f"Fallback also failed: {fallback_e}. Using zero ref_per_token_logps.")
-                    # Create zero tensor with same shape as per_token_logps
-                    ref_per_token_logps = torch.zeros_like(per_token_logps)
 
         # Compute the KL divergence between the model and the reference model
         x_clamped = torch.clamp(ref_per_token_logps - per_token_logps, min=-10, max=10)  # 限制 x 的范围
@@ -739,53 +575,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             except Exception as cleanup_error:
                 print(f"Warning: Failed to cleanup temporary directory {temp_dir}: {cleanup_error}")
         
-
-        
-        
-        # if self.temporal and videos:
-        #     temporal_rewards_per_func = rewards_per_func.clone()
-            
-        #     acc_mean = temporal_rewards_per_func[:, 0].mean()
-        #     shuffled_acc_mean = shuffled_rewards_per_func[:, 0].mean()
-
-        #     if acc_mean >= 0.8 * shuffled_acc_mean:
-        #         mask = temporal_rewards_per_func[:, 0] > 0.1
-        #         temporal_rewards_per_func[mask, 0] = temporal_rewards_per_func[mask, 0] + 0.3
-        #         temporal_rewards = torch.tensor([1.0]).to('cuda')
-        #     else:
-        #         temporal_rewards = torch.tensor([0.0]).to('cuda')
-        # else:
-        #     temporal_rewards =  torch.tensor([0.5]).to('cuda')
-        
-        # Sum the rewards from all reward functions
-        # if self.temporal and videos:
-        #     rewards = temporal_rewards_per_func.sum(dim=1)
-        # else:
         rewards = rewards_per_func.sum(dim=1)
-    
-        
-        # if self.len_control:
-        #     mem_rewards = [0] * self.num_generations
-        #     mask = rewards_per_func[:, 0] > 0.1
-        #     lenth_list = completion_mask.sum(1)
-        #     selected_indices = torch.nonzero(mask, as_tuple=True)[0].tolist()
-        #     #             if len(selected_indices) > 1 and len(selected_indices) < self.num_generations:
-        #     # if len(selected_indices) > 1:
-        #     #     selected_items = [(i, lenth_list[i]) for i in selected_indices]
-        #     #     sorted_items = sorted(selected_items, key=lambda x: x[1], reverse=True)
-        #     #     N = len(sorted_items)
-        #     #     for rank, (idx, length) in enumerate(sorted_items):
-        #     #         reward = 0.2 - 0.2 * (rank / N)
-        #     #         rewards[idx] += reward
-        #     #         mem_rewards[idx] = reward
-        #     # for idx in range(len(lenth_list)):
-        #     #     if lenth_list[idx] >= 512:
-        #     #         rewards[idx] -= 0.5
-                    
-        #     if len(selected_indices) > 1:     
-        #         for idx in selected_indices:
-        #             if 320 <= lenth_list[idx] <= 512:
-        #                 rewards[idx] += 0.2
         
         print(rewards)
         print(completion_mask.sum(1))
@@ -799,10 +589,6 @@ class Qwen2VLGRPOTrainer(Trainer):
         std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
         
-        # if self.len_control and len(selected_indices) == self.num_generations:
-        #     for idx in range(len(rewards)):
-        #         advantages[idx] += (mem_rewards[idx] - 0.2) * 2
-
         # x - x.detach() allows for preserving gradients from x
         per_token_loss = torch.exp(per_token_logps - per_token_logps.detach()) * advantages.unsqueeze(1)
         per_token_loss = -(per_token_loss - self.beta * per_token_kl)
@@ -837,11 +623,6 @@ class Qwen2VLGRPOTrainer(Trainer):
         
         self._metrics["all_wrong"].append(wrong_ratio)
         self._metrics["all_correct"].append(correct_ratio)
-        
-        # if self.temporal:
-        #     temporal_rewards = torch.tensor([0.5]).to(device)
-        #     temporal_rewards_list = self.accelerator.gather_for_metrics(temporal_rewards)
-        #     self._metrics["temporal_rewards"].append(self.accelerator.gather_for_metrics(temporal_rewards_list).mean().item())
         
         self._metrics["reward"].append(self.accelerator.gather_for_metrics(rewards).mean().item())
 

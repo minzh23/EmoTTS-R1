@@ -22,6 +22,7 @@ import hydra
 from openai import OpenAI
 import os
 import base64
+import wandb
 
 from datasets import load_dataset, load_from_disk
 
@@ -209,6 +210,12 @@ def main(kwargs: DictConfig):
     #     checkpoint = train_config.resume_from_checkpoint
     #     trainer.train(resume_from_checkpoint=checkpoint)
     # else:
+    wandb.init(
+        project="EmoTTS-R1",
+        name="grpo",
+        config=OmegaConf.to_container(train_config, resolve=True),
+        mode="online",
+    )
     trainer.train()
 
     # Save and push to hub
