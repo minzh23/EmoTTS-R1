@@ -61,10 +61,10 @@ def main_hydra(cfg: DictConfig):
     inference(cfg)
 
 if __name__ == "__main__":
-    import debugpy
-    debugpy.listen(("0.0.0.0", 5678))
-    print("Waiting for debugger to attach...")
-    debugpy.wait_for_client()  # Execution will pause here until a debugger connects
+    # import debugpy
+    # debugpy.listen(("0.0.0.0", 5678))
+    # print("Waiting for debugger to attach...")
+    # debugpy.wait_for_client()  # Execution will pause here until a debugger connects
 
-    print("Debugger attached. Continuing execution...")
+    # print("Debugger attached. Continuing execution...")
     main_hydra()

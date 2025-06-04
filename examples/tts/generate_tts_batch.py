@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from slam_llm.utils.model_utils import get_custom_model_factory
 from slam_llm.utils.dataset_utils import get_preprocessed_dataset
 from utils.codec_utils import audio_decode_cosyvoice
+from transformers import GenerationConfig
 
 @hydra.main(config_name=None, version_base=None)
 def main_hydra(cfg: DictConfig):
@@ -65,7 +66,7 @@ def main(kwargs: DictConfig):
 	
 	model_factory = get_custom_model_factory(model_config, logger)
 	model, tokenizer = model_factory(train_config, model_config, **kwargs)
-	codec_decoder = model.codec_decoder
+	codec_decoder = model.slam_model.codec_decoder
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	model.to(device)
 	model.eval()
@@ -107,9 +108,10 @@ def main(kwargs: DictConfig):
 	pred_path = os.path.join(decode_log_dir, "pred_text")
 	gt_path = os.path.join(decode_log_dir, "gt_text")
 	question_path = os.path.join(decode_log_dir, "question_text")
-	generate_audio_dir = os.path.join(decode_log_dir, "pred_audio")
+	# generate_audio_dir = os.path.join(decode_log_dir, "pred_audio")
+	generate_audio_dir = "/root/EmoVoice"
 
-	tone_dir = "neutral_prompt_speech"
+	tone_dir = "demo_audio"
 	tone_audio_dir = os.path.join(generate_audio_dir, tone_dir)
 	if not os.path.exists(tone_audio_dir) and not (output_text_only or decode_config.decode_text_only):
 		os.makedirs(tone_audio_dir)
@@ -140,10 +142,15 @@ def main(kwargs: DictConfig):
 				batch[key] = batch[key].to(device) if isinstance(batch[key], torch.Tensor) else batch[key]
 
 			audio_prompt_path = "/root/EmoVoice/EmoVoice-DB/" + batch["neutral_speaker_wav"][0]
-
+			generation_config = GenerationConfig(
+            	max_new_tokens=decode_config.max_new_tokens,
+            	do_sample=decode_config.do_sample,
+            	top_p=decode_config.top_p,
+            	temperature=decode_config.temperature,  # HACK
+        	)
 			start_time = time.time()
 			if modeling_paradigm == "parallel" or modeling_paradigm == "interleaved":
-				model_outputs = model.generate(**batch, **decode_config)
+				model_outputs = model.generate(**batch, decode_config=decode_config, generation_config=generation_config)
 			elif modeling_paradigm == "serial":
 				model_outputs = model.serial_generate(**batch, **decode_config)
 
@@ -157,7 +164,7 @@ def main(kwargs: DictConfig):
 				raise NotImplementedError
 			end_time_llm = time.time()
 			logger.info(f"LLM Inference Time: {end_time_llm - start_time:.2f}s")
-			output_text = model.tokenizer.decode(text_outputs, add_special_tokens=False, skip_special_tokens=True)
+			output_text = model.slam_model.tokenizer.decode(text_outputs, add_special_tokens=False, skip_special_tokens=True)
 			for key, source_text, target_text, generated_text in zip(batch["keys"], batch["source_texts"], batch["target_texts"], [output_text]):
 				q.write(key + "\t" + source_text + "\n")
 				if "chuanxing" in dataset_config.val_data_path:

@@ -186,7 +186,8 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
         neutral_speaker_wav = data_dict.get("neutral_speaker_wav", None)
         emotion_text_prompt = data_dict.get("emotion_text_prompt", None)
 
-        target_audio, target_audio_length = self.extract_audio_feature(target_audio)
+        if self.inference_mode is False:
+            target_audio, target_audio_length = self.extract_audio_feature(target_audio)
 
         prompt="Say this sentence. "
         if self.use_emo:
@@ -225,8 +226,8 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
                 "attention_mask": example_mask,
                 "input_length": input_length,
                 "audio_length": audio_length,
-                "target_audio": target_audio,
-                "target_audio_length": target_audio_length,
+                # "target_audio": target_audio,
+                # "target_audio_length": target_audio_length,
                 "key": key,
                 "source_text": source_text,
                 "target_text": target_text,
@@ -414,7 +415,7 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
             keys = [s['key'] for s in samples]
             target_text = [s['target_text'] for s in samples]
             source_text = [s['source_text'] for s in samples]
-            target_audio = [s['target_audio'] for s in samples]
+            # target_audio = [s['target_audio'] for s in samples]
             neutral_speaker_wav = [s['neutral_speaker_wav'] for s in samples]
 
             return {
@@ -428,7 +429,7 @@ class SpeechDatasetJsonl(torch.utils.data.Dataset):
                 "keys": keys,
                 "target_texts": target_text,
                 "source_texts": source_text,
-                "target_audio": target_audio,
+                # "target_audio": target_audio,
                 "neutral_speaker_wav": neutral_speaker_wav,
             }
         

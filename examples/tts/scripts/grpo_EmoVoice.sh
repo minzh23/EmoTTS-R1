@@ -10,7 +10,8 @@ code_dir=examples/tts
 llm_path="/root/EmoVoice/checkpoint/Qwen2.5-0.5B"
 codec_decoder_path="/root/EmoVoice/checkpoint/CosyVoice"
 ckpt_path=/root/EmoVoice/checkpoint
-split=test
+split=train
+train_data_path=/root/EmoVoice/EmoVoice-DB/train.jsonl
 val_data_path=/root/EmoVoice/EmoVoice-DB/test.jsonl
 
 # vocabulary settings
@@ -62,7 +63,7 @@ python $code_dir/grpo_tts.py \
         ++model_config.use_text_stream=false \
         ++dataset_config.dataset=speech_dataset_tts \
         ++dataset_config.val_data_path=$val_data_path \
-        ++dataset_config.train_data_path=$val_data_path \
+        ++dataset_config.train_data_path=$train_data_path \
         ++dataset_config.inference_mode=true \
         ++dataset_config.vocab_config.code_layer=$code_layer \
         ++dataset_config.vocab_config.total_audio_vocabsize=$total_audio_vocabsize \

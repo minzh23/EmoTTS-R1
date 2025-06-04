@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import random
 import textwrap
 from collections import defaultdict
 from typing import Any, Callable, Optional, Union
@@ -181,7 +182,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             args = GRPOConfig(f"{model_name}-GRPO")
             args.per_device_train_batch_size = 1
             args.save_steps = 100
-            args.report_to = ["wandb"]
+            args.report_to = []
             args.output_dir = "/root/autodl-tmp/EmoTTS-R1-Checkpoints"
         
         self.decode_config = decode_config
@@ -377,6 +378,10 @@ class Qwen2VLGRPOTrainer(Trainer):
                             del sub_entry[k]
         return data
 
+    def random_reference_audio_path(self, folder_path):
+        files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+        selected = random.choice(files)
+        return os.path.join(folder_path, selected)
 
     # Trainer "prepares" the inputs before calling `compute_loss`. It converts to tensor and move to device.
     # Since we preprocess the data in `compute_loss`, we need to override this method to skip this step.
@@ -518,8 +523,11 @@ class Qwen2VLGRPOTrainer(Trainer):
             # Get audio prompt path if available
             audio_prompt_path = None
             if len(inputs) > 0 and 'neutral_speaker_wav' in inputs[0]:
-                audio_prompt_path = "/root/EmoVoice/EmoVoice-DB/" + inputs[0]['neutral_speaker_wav']
-            
+                if inputs[0]['neutral_speaker_wav'] is not None: 
+                    audio_prompt_path = "/root/EmoVoice/EmoVoice-DB/" + inputs[0]['neutral_speaker_wav']
+                else:
+                    audio_prompt_path = self.random_reference_audio_path(folder_path="/root/EmoVoice/EmoVoice-DB/audio/neutral")
+
             # Create temporary directory for audio files
             temp_dir = tempfile.mkdtemp()
             

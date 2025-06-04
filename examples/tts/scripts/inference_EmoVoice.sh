@@ -11,7 +11,8 @@ llm_path="/root/EmoVoice/checkpoint/Qwen2.5-0.5B"
 codec_decoder_path="/root/EmoVoice/checkpoint/CosyVoice"
 ckpt_path=/root/EmoVoice/checkpoint
 split=test
-val_data_path=/root/EmoVoice/EmoVoice-DB/test.jsonl
+# val_data_path=/root/EmoVoice/EmoVoice-DB/test.jsonl
+val_data_path=/root/EmoVoice/demo.jsonl
 
 # vocabulary settings
 code_layer=3            # 1 single semantic code layer   2 3 4 5 6 7 8 group semantic code layers 
@@ -89,7 +90,7 @@ python $code_dir/inference_tts.py \
         ++decode_config.num_latency_tokens=$num_latency_tokens \
         ++decode_config.do_layershift=$do_layershift \
         ++decode_log=$decode_log \
-        ++ckpt_path=$ckpt_path/EmoVoice.pt \
+        ++ckpt_path=/root/autodl-tmp/EmoTTS-R1-Checkpoints/checkpoint-1000/slam_model.pt \
         ++output_text_only=$output_text_only \
         ++speech_sample_rate=$speech_sample_rate \
         ++log_config.log_file=$decode_log/infer.log \

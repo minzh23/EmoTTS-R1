@@ -62,7 +62,10 @@ def accuracy_reward(prompts, audio_outputs, **kwargs):
 
     for prompt, audio_output in zip(prompts, audio_outputs):
     
-        
+        if audio_output is None:
+            print(f"Audio output is None for prompt: {prompt}")
+            rewards.append(0.0)
+            continue
         base64_audio = convert_to_base64(audio_output)
         source_prompt = prompt["source_prompt"]
         emotion_prompt = prompt["emotion_prompt"]
@@ -182,7 +185,7 @@ def main(kwargs: DictConfig):
     dataset = get_preprocessed_dataset(
         tokenizer,
         dataset_config,
-        split="test",
+        split="train",
     )
     
     # trainer_cls = Qwen2VLGRPOTrainer if not training_args.use_vllm else Qwen2VLGRPOVLLMTrainerModified
@@ -210,13 +213,14 @@ def main(kwargs: DictConfig):
     #     checkpoint = train_config.resume_from_checkpoint
     #     trainer.train(resume_from_checkpoint=checkpoint)
     # else:
-    wandb.init(
-        project="EmoTTS-R1",
-        name="grpo",
-        config=OmegaConf.to_container(train_config, resolve=True),
-        mode="online",
-    )
-    trainer.train()
+    # wandb.init(
+    #     project="EmoTTS-R1",
+    #     name="grpo",
+    #     config=OmegaConf.to_container(train_config, resolve=True),
+    #     mode="online",
+    # )
+    trainer.train(resume_from_checkpoint="/root/autodl-tmp/EmoTTS-R1-Checkpoints/checkpoint-100")
+    # trainer.train()
 
     # Save and push to hub
     trainer.save_model(train_config.output_dir)
@@ -225,7 +229,7 @@ def main(kwargs: DictConfig):
 
 
 if __name__ == "__main__":
-    # local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     # if local_rank == 0:
     #     import debugpy
     #     debugpy.listen(("127.0.0.1", 5678))
