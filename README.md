@@ -27,12 +27,18 @@
 <tr>
 <td align="center">
 
-[I_love_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/love_dl_best_course.webm)
+  <audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/love_dl_best_course.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/love_dl_best_course.webm">Download I_love_DL.webm</a>
+</audio>
 
 </td>
 <td align="center">
     
-[I_hate_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/hate_dl_angry.webm)
+<audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/hate_dl_angry.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/hate_dl_angry.webm">Download I_hate_DL.webm</a>
+</audio>
 
 </td>
 </tr>
@@ -56,11 +62,17 @@
 <tr>
 <td align="center">
     
-[Helicopter_Best_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe_2.webm)
+<audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/kobe_2.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/kobe_2.webm">Download Helicopter_Best_Vehicle.webm</a>
+</audio>
 </td>
 <td align="center">
     
-[Helicopter_Worst_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe.webm)
+<audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/kobe.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/kobe.webm">Download Helicopter_Worst_Vehicle.webm</a>
+</audio>
 </td>
 </tr>
 </table>
@@ -83,12 +95,18 @@
 <tr>
 <td align="center">
 
-[Visa_Revoke_Formal.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump.webm)
+<audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/trump.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/trump.webm">Download Visa_Revoke_Formal.webm</a>
+</audio>
 
 </td>
 <td align="center">
     
-[Visa_Revoke_Irritating.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump_1.webm)
+<audio controls>
+  <source src="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/trump_1.webm" type="audio/webm">
+  <a href="https://github.com/minzh23/EmoTTS-R1/raw/main/demo_audio/trump_1.webm">Download Visa_Revoke_Irritating.webm</a>
+</audio>
 
 </td>
 </tr>
