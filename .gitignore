@@ -12,7 +12,6 @@ examples/tts/README_transformers_wrapper.md
 examples/tts/train_transformers_wrapper_example.py
 wandb/
 EmoVoice-GRPO/
-demo_audio/
 *.wav
 *.jsonl
 convert_m4a_to_wav.py
