@@ -27,12 +27,12 @@
 <tr>
 <td align="center">
 
-[I_love_DL.webm](https://github.com/user-attachments/assets/98c28356-e083-4b7d-8bf3-af9e84cde919)
+[I_love_DL.webm](https://github.com/user-attachments/assets/e7084692-cd39-4b35-addc-c1d8c739992a)
 
 </td>
 <td align="center">
     
-[I_hate_DL.webm](https://github.com/user-attachments/assets/89244ec5-e869-464c-92c1-904097f7afb1)
+[I_hate_DL.webm](https://github.com/user-attachments/assets/33ca0fb8-153f-4332-958d-77d82cb45013)
 
 </td>
 </tr>
@@ -56,11 +56,11 @@
 <tr>
 <td align="center">
     
-[Helicopter_Best_Vehicle.webm](https://github.com/user-attachments/assets/a489b329-5e4e-444a-a81c-758094da3616)
+[Helicopter_Best_Vehicle.webm](https://github.com/user-attachments/assets/d4228f7e-10c4-4c12-bfef-bbee999ce0f4)
 </td>
 <td align="center">
     
-[Helicopter_Worst_Vehicle.webm](https://github.com/user-attachments/assets/73d45ecf-7b41-49e4-816b-723a9a165be0)
+[Helicopter_Worst_Vehicle.webm](https://github.com/user-attachments/assets/a4f5b793-93c2-48ae-afb7-3971ceff89c1)
 </td>
 </tr>
 </table>
@@ -88,7 +88,8 @@
 </td>
 <td align="center">
     
-[Visa_Revoke_Irritating.webm](https://github.com/user-attachments/assets/0c764fce-af49-4e1c-a97a-955eae951585)
+[Visa_Revoke_Irritating.webm](https://github.com/user-attachments/assets/423b9600-1cd9-4247-88d5-1c95c13e0b2b
+)
 
 </td>
 </tr>
