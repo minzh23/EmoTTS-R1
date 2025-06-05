@@ -27,12 +27,12 @@
 <tr>
 <td align="center">
 
-[I_love_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/love_dl_best_course.wav)
+[I_love_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/love_dl_best_course.webm)
 
 </td>
 <td align="center">
     
-[I_hate_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/hate_dl_angry.wav)
+[I_hate_DL.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/hate_dl_angry.webm)
 
 </td>
 </tr>
@@ -56,11 +56,11 @@
 <tr>
 <td align="center">
     
-[Helicopter_Best_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe_2.wav)
+[Helicopter_Best_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe_2.webm)
 </td>
 <td align="center">
     
-[Helicopter_Worst_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe.wav)
+[Helicopter_Worst_Vehicle.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/kobe.webm)
 </td>
 </tr>
 </table>
@@ -83,12 +83,12 @@
 <tr>
 <td align="center">
 
-[Visa_Revoke_Formal.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump.wav)
+[Visa_Revoke_Formal.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump.webm)
 
 </td>
 <td align="center">
     
-[Visa_Revoke_Irritating.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump_1.wav)
+[Visa_Revoke_Irritating.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump_1.webm)
 
 </td>
 </tr>
