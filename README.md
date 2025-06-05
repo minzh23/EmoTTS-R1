@@ -83,12 +83,12 @@
 <tr>
 <td align="center">
 
-[Yu_Chengdong.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump.wav)
+[Visa_Revoke_Formal.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump.wav)
 
 </td>
 <td align="center">
     
-[Ma_Yun.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump_1.wav)
+[Visa_Revoke_Irritating.webm](https://github.com/minzh23/EmoTTS-R1/blob/main/demo_audio/trump_1.wav)
 
 </td>
 </tr>
