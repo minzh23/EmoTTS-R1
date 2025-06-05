@@ -12,7 +12,7 @@ codec_decoder_path="/root/EmoVoice/checkpoint/CosyVoice"
 ckpt_path=/root/EmoVoice/checkpoint
 split=test
 # val_data_path=/root/EmoVoice/EmoVoice-DB/test.jsonl
-val_data_path=/root/EmoVoice/demo.jsonl
+val_data_path=/root/EmoVoice/demo_1.jsonl
 
 # vocabulary settings
 code_layer=3            # 1 single semantic code layer   2 3 4 5 6 7 8 group semantic code layers 
